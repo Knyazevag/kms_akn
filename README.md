@@ -1,5 +1,7 @@
 # KMS — Интеллектуальная система поиска по документам
 
+> 🇬🇧 **English:** user guide — [`rag_final_guide_eng.md`](rag_final_guide_eng.md) · system README — [`rag_system/README_eng.md`](rag_system/README_eng.md)
+
 Локальная RAG-система (Retrieval-Augmented Generation) для поиска и анализа
 больших архивов научных и технических документов. Работает полностью офлайн.
 
@@ -13,12 +15,16 @@
 - Интеграция с Claude Code через MCP.
 
 ## Документация
-Полное руководство пользователя — [`rag_final_guide.md`](rag_final_guide.md)
-(сборка в PDF: [`rag_final_guide.pdf`](rag_final_guide.pdf)).
+- 🇷🇺 Руководство пользователя — [`rag_final_guide.md`](rag_final_guide.md)
+  (сборка в PDF: [`rag_final_guide.pdf`](rag_final_guide.pdf)).
+- 🇬🇧 User guide (English) — [`rag_final_guide_eng.md`](rag_final_guide_eng.md).
+- Техническое описание системы — [`rag_system/README.md`](rag_system/README.md)
+  ([English](rag_system/README_eng.md)).
 
 ## Структура
-- `rag_system/` — код системы (индексация, RAG-движок, чат-UI, наблюдатель, MCP-сервер, шаблоны).
-- `rag_final_guide.md` / `.pdf` — руководство пользователя.
+- `rag_system/` — код системы (индексация, RAG-движок, чат-UI, наблюдатель, MCP-сервер, шаблоны);
+  README на русском и английском (`README.md` / `README_eng.md`).
+- `rag_final_guide.md` / `.pdf` — руководство пользователя (RU); `rag_final_guide_eng.md` — английская версия.
 - `generate_rag_final_guide.py` — генератор фирменного PDF из руководства.
 
 ## Быстрый старт
@@ -33,7 +39,7 @@ python chat_ui.py         # веб-интерфейс на http://127.0.0.1:7860
 ```
 
 ---
-Автор: Александр Князев. Версия 5.1.
+Автор: Александр Князев, начальник отдела технологий декарбонизации. Версия 5.1.
 
 ## Лицензия
 
