@@ -1,6 +1,56 @@
+# KMS — Intelligent Document Search System
+
+> **Languages:** 🇬🇧 English (below) · [🇷🇺 Русский](#kms--интеллектуальная-система-поиска-по-документам)
+
+A local RAG (Retrieval-Augmented Generation) system for searching and analyzing
+large archives of scientific and technical documents. Runs fully offline.
+
+## Features
+- Indexing of documents (PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT) into ChromaDB.
+- Answering questions about the archive content with references to sources (RU/EN).
+- Automatic creation of structured Obsidian notes with tags and a link graph.
+- Folder watcher: new files are indexed automatically (including on USB/NTFS).
+- Multiple LLM providers: Ollama (local), Groq, DeepSeek, OpenRouter, LM Studio.
+- Optional GPU acceleration of indexing (NVIDIA CUDA).
+- Integration with Claude Code via MCP.
+
+## Documentation
+- 🇬🇧 User guide (English) — [`rag_final_guide_eng.md`](rag_final_guide_eng.md).
+- 🇷🇺 User guide (Russian) — [`rag_final_guide.md`](rag_final_guide.md)
+  (PDF build: [`rag_final_guide.pdf`](rag_final_guide.pdf)).
+- Technical description of the system — [`rag_system/README_eng.md`](rag_system/README_eng.md)
+  ([Russian](rag_system/README.md)).
+
+## Structure
+- `rag_system/` — system code (indexing, RAG engine, chat UI, watcher, MCP server, templates);
+  README in English and Russian (`README_eng.md` / `README.md`).
+- `rag_final_guide.md` / `.pdf` — user guide (RU); `rag_final_guide_eng.md` — English version.
+- `generate_rag_final_guide.py` — generator of the branded PDF from the guide.
+
+## Quick start
+See sections 1–3 of the guide. In short:
+```bash
+cd rag_system
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# Ollama + a model, then:
+python ingest.py          # indexing
+python chat_ui.py         # web interface at http://127.0.0.1:7860
+```
+
+---
+Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. Version 5.1.
+
+## License
+
+[MIT](LICENSE) © 2026 Alexander Knyazev.
+
+---
+---
+
 # KMS — Интеллектуальная система поиска по документам
 
-> 🇬🇧 **English:** user guide — [`rag_final_guide_eng.md`](rag_final_guide_eng.md) · system README — [`rag_system/README_eng.md`](rag_system/README_eng.md)
+> **Языки:** [🇬🇧 English](#kms--intelligent-document-search-system) · 🇷🇺 Русский (ниже)
 
 Локальная RAG-система (Retrieval-Augmented Generation) для поиска и анализа
 больших архивов научных и технических документов. Работает полностью офлайн.
