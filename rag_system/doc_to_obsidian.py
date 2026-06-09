@@ -18,6 +18,7 @@ doc_to_obsidian.py — Интеграция RAG-системы с Obsidian.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import re
@@ -39,9 +40,14 @@ except ImportError as exc:
 
 # ─── Константы ────────────────────────────────────────────────────────────
 MAX_PAGES: int = 3            # сколько страниц/блоков читать для анализа
-MAX_RETRIES: int = 2          # попыток запроса к Ollama
+MAX_RETRIES: int = 3          # попыток запроса к Ollama (часть может уходить на рост бюджета)
 MIN_COMMON_TAGS: int = config.WIKILINK_MIN_COMMON_TAGS
 TEXT_LIMIT: int = 6000        # лимит символов текста, передаваемого в промпт
+# Бюджет токенов на ПОЛНЫЙ JSON-объект метаданных. Дефолтный num_predict=1024
+# (config.OLLAMA_OPTIONS) подходит для чата, но богатые статьи дают вывод длиннее
+# 1024 токенов → JSON обрывается без закрывающей "}" → «не найден JSON-объект».
+JSON_NUM_PREDICT: int = 2048
+JSON_NUM_PREDICT_MAX: int = 8192  # потолок при удвоении бюджета на ретраях
 
 # ─── Логирование ──────────────────────────────────────────────────────────
 
@@ -358,15 +364,21 @@ def call_ollama(
     max_retries: int = MAX_RETRIES,
 ) -> dict[str, Any] | None:
     prompt = _build_prompt(text, taxonomy, file_type)
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,  # thinking-модели (qwen3/r1) иначе не вернут JSON в response
-        "options": config.OLLAMA_OPTIONS,
-    }
+    # Локальная копия опций: не трогаем глобальный config.OLLAMA_OPTIONS (его
+    # использует и чат). Берём бюджет не меньше JSON_NUM_PREDICT.
+    options = copy.deepcopy(config.OLLAMA_OPTIONS)
+    num_predict = max(int(options.get("num_predict", 0)), JSON_NUM_PREDICT)
 
     for attempt in range(1, max_retries + 1):
+        options["num_predict"] = num_predict
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "think": False,   # thinking-модели (qwen3/r1) иначе не вернут JSON в response
+            "format": "json",  # форсируем JSON-грамматику: без прозы и ```-ограждений
+            "options": options,
+        }
         try:
             response = requests.post(
                 config.OLLAMA_API_URL,
@@ -374,7 +386,17 @@ def call_ollama(
                 timeout=config.OLLAMA_TIMEOUT,
             )
             response.raise_for_status()
-            raw = response.json().get("response", "")
+            data = response.json()
+            raw = data.get("response", "")
+            # Обрыв по лимиту токенов → JSON неполный. Удваиваем бюджет и
+            # повторяем (ретрай с теми же параметрами был бы бесполезен).
+            if data.get("done_reason") == "length" and num_predict < JSON_NUM_PREDICT_MAX:
+                log.warning(
+                    "Попытка %d/%d: вывод обрезан по num_predict=%d — увеличиваю бюджет",
+                    attempt, max_retries, num_predict,
+                )
+                num_predict = min(num_predict * 2, JSON_NUM_PREDICT_MAX)
+                continue
             json_match = re.search(r"\{[\s\S]*\}", raw)
             if not json_match:
                 raise ValueError("В ответе Ollama не найден JSON-объект")
