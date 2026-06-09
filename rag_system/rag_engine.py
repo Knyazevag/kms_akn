@@ -92,6 +92,7 @@ def _balance_by_language(
     chunks: list[dict],
     top_k: int,
     min_per_language: int,
+    guaranteed_languages: tuple = config.BALANCED_LANGUAGES,
 ) -> list[dict]:
     """
     Балансирует выдачу по языку, чтобы запрос на одном языке не вытеснял
@@ -99,27 +100,33 @@ def _balance_by_language(
 
     Вход: список чанков, ОТСОРТИРОВАННЫЙ по возрастанию distance (лучшие первыми).
     Логика:
-        1. Гарантируем минимум `min_per_language` лучших чанков каждого
-           присутствующего в пуле языка (round-robin, чтобы соблюсти top_k).
-        2. Оставшиеся места заполняем по глобально лучшему скору.
+        1. Гарантируем минимум `min_per_language` лучших чанков каждому языку
+           из `guaranteed_languages` (по умолчанию ru/en), присутствующему в
+           пуле (round-robin, чтобы соблюсти top_k). Прочие категории ('other',
+           'unknown') брони не получают.
+        2. Оставшиеся места заполняем по глобально лучшему скору — здесь в
+           выдачу могут попасть и чанки прочих категорий, если их скор высок.
     Возвращает не более `top_k` чанков, отсортированных по distance (лучшие первыми).
 
-    Если в пуле один язык — поведение эквивалентно обычному отбору top-k по скору
-    (никакие нерелевантные чанки не навязываются).
+    Если в пуле один гарантируемый язык — поведение эквивалентно обычному отбору
+    top-k по скору (никакие нерелевантные чанки не навязываются).
     """
     if len(chunks) <= top_k:
         return chunks
 
-    # Группируем по языку с сохранением порядка (чанки уже отсортированы по distance)
+    # Группируем гарантируемые языки с сохранением порядка
+    # (чанки уже отсортированы по distance)
     by_lang: "OrderedDict[str, list[dict]]" = OrderedDict()
     for ch in chunks:
         lang = ch["metadata"].get("language", "unknown")
-        by_lang.setdefault(lang, []).append(ch)
+        if lang in guaranteed_languages:
+            by_lang.setdefault(lang, []).append(ch)
 
     selected: list[dict] = []
     selected_ids: set[int] = set()
 
-    # Фаза 1: гарантируем минимум на каждый язык (round-robin по языкам)
+    # Фаза 1: гарантируем минимум каждому языку из guaranteed_languages
+    # (round-robin по языкам)
     for _ in range(min_per_language):
         for lst in by_lang.values():
             for ch in lst:
