@@ -347,9 +347,14 @@ class RAGEngine:
         logger.info("Инициализация RAGEngine...")
 
         # 1. Загрузка модели эмбеддингов (используется та же, что при индексации)
-        logger.info(f"Загрузка модели эмбеддингов: {embedding_model}")
+        logger.info(
+            f"Загрузка модели эмбеддингов: {embedding_model} "
+            f"(device={config.EMBEDDING_DEVICE or 'auto'})"
+        )
         try:
-            self.embedding_model = SentenceTransformer(embedding_model)
+            self.embedding_model = SentenceTransformer(
+                embedding_model, device=config.EMBEDDING_DEVICE
+            )
             logger.info("Модель эмбеддингов загружена.")
         except Exception as e:
             logger.critical(f"Не удалось загрузить модель эмбеддингов: {e}")

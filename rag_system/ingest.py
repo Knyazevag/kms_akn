@@ -545,8 +545,11 @@ def run_ingestion(doc_dir: Path, reset: bool = False) -> None:
     logger.info("=" * 60)
 
     # Модель эмбеддингов
-    logger.info(f"Загрузка модели эмбеддингов: {config.EMBEDDING_MODEL}")
-    model = SentenceTransformer(config.EMBEDDING_MODEL)
+    logger.info(
+        f"Загрузка модели эмбеддингов: {config.EMBEDDING_MODEL} "
+        f"(device={config.EMBEDDING_DEVICE or 'auto'})"
+    )
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=config.EMBEDDING_DEVICE)
 
     # ChromaDB
     collection = get_collection(reset=reset)

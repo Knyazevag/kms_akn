@@ -51,6 +51,11 @@ MIN_CHUNK_LENGTH: int = 50
 EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large"   # максимальное качество поиска (~2.2 ГБ)
 EMBEDDING_BATCH_SIZE: int = 32
 NORMALIZE_EMBEDDINGS: bool = True
+# Устройство для модели эмбеддингов: "cpu", "cuda" или None (авто-выбор torch).
+# По умолчанию CPU: GPU 8 ГБ не вмещает одновременно Ollama (~6 ГБ) и e5-large
+# (~2 ГБ), из-за чего индексация падала с CUDA OOM. CPU убирает конфликт за GPU
+# (эмбеддинг запроса всё равно занимает доли секунды).
+EMBEDDING_DEVICE: str | None = "cpu"
 
 # ─────────────────────────────────────────────────────────────
 # Параметры ChromaDB
