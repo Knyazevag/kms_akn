@@ -2,7 +2,7 @@
 """
 RAG KMS: Полное руководство пользователя
 PDF Generation Script — версия 5.1
-Автор: Александр Князев, начальник ОТД АО «НИИ НПО «ЛУЧ» - ПФ
+Автор: Александр Князев, начальник отдела технологий декарбонизации АО «НИИ НПО «ЛУЧ» — ПФ
 """
 
 import os
@@ -569,7 +569,7 @@ def what_happens_box(content, styles):
 def on_first_page(canvas, doc):
     """Cover page — no header/footer."""
     canvas.setTitle("RAG KMS: Полное руководство пользователя")
-    canvas.setAuthor("Александр Князев, начальник ОТД АО «НИИ НПО «ЛУЧ» - ПФ")
+    canvas.setAuthor("Александр Князев, начальник отдела технологий декарбонизации АО «НИИ НПО «ЛУЧ» — ПФ")
 
 def on_later_pages(canvas, doc):
     """Header and footer for all pages after cover."""
@@ -645,7 +645,7 @@ def build_document():
     ))
     story.append(SP(4))
     story.append(Paragraph(
-        "начальник ОТД АО «НИИ НПО «ЛУЧ» - ПФ",
+        "начальник отдела технологий декарбонизации АО «НИИ НПО «ЛУЧ» — ПФ",
         ParagraphStyle("cover_author2", fontName="NotoSans", fontSize=11,
                        leading=18, textColor=C_TEXT_MUTED, alignment=TA_CENTER)
     ))
@@ -685,7 +685,7 @@ def build_document():
     ))
     story.append(SP(4))
     story.append(Paragraph(
-        "Александр Князев, начальник ОТД АО «НИИ НПО «ЛУЧ» - ПФ",
+        "Александр Князев, начальник отдела технологий декарбонизации АО «НИИ НПО «ЛУЧ» — ПФ",
         ParagraphStyle("final2", fontName="NotoSans-Italic", fontSize=9.5,
                        leading=14, textColor=C_TEXT_MUTED, alignment=TA_CENTER)
     ))
@@ -697,7 +697,7 @@ def build_document():
         output_path,
         pagesize=A4,
         title="RAG KMS: Полное руководство пользователя",
-        author="Александр Князев, начальник ОТД АО «НИИ НПО «ЛУЧ» - ПФ",
+        author="Александр Князев, начальник отдела технологий декарбонизации АО «НИИ НПО «ЛУЧ» — ПФ",
         leftMargin=MARGIN_LEFT,
         rightMargin=MARGIN_RIGHT,
         topMargin=MARGIN_TOP,
