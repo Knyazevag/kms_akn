@@ -116,7 +116,7 @@ MAX_CONTEXT_CHUNKS: int = 8
 
 UI_HOST: str = "127.0.0.1"
 UI_PORT: int = 7860
-UI_TITLE: str = "Князев (личный архив)"
+UI_TITLE: str = "Отдел технологий декарбонизации (архив)"
 UI_DESCRIPTION: str = (
     "Интеллектуальная поисковая система по научным документам. "
     "Поддерживаемые форматы: PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT. "

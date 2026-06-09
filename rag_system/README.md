@@ -1,295 +1,393 @@
-# RAG-система для научных PDF-архивов
-## Нефтегазовая инженерия | Русский + English
+# RAG-KMS — локальная система управления знаниями
+## Офлайн-поиск по техническому архиву | Русский + English
 
-Локальная система поиска и генерации ответов (RAG) по научным PDF-документам. Работает полностью offline — данные не покидают ваш компьютер.
+> 🇬🇧 English version: [README_eng.md](README_eng.md)
+
+Локальная система поиска и генерации ответов (RAG) по архиву научно-технических
+документов. Работает в защищённом контуре: индексация и эмбеддинги выполняются
+полностью офлайн, а в качестве LLM можно использовать как локальную Ollama, так и
+облачные API (по желанию).
+
+Тематический профиль базы знаний — нефтегазовая инженерия и геологическое
+захоронение CO₂, но система не привязана к предметной области.
+
+---
+
+## Возможности
+
+- **Мультиформатная индексация** — PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT
+  (список форматов — `config.SUPPORTED_EXTENSIONS`).
+- **Семантический поиск** по смыслу (а не по совпадению слов) на двух языках —
+  русском и английском — через модель `intfloat/multilingual-e5-large`.
+- **Гибкий выбор LLM** — единый интерфейс `llm_provider.py` поддерживает 5
+  провайдеров: `ollama`, `groq`, `deepseek`, `openrouter`, `lmstudio`.
+  Переключение через `config.py` без изменения кода.
+- **Веб-интерфейс** на Gradio с историей диалога и памятью контекста.
+- **Автоматическая индексация** новых файлов через наблюдатель за папкой архива
+  (`watcher.py`), устанавливаемый как systemd-сервис.
+- **Интеграция с Obsidian** — автогенерация заметок с YAML-frontmatter,
+  тегами из таксономии и wikilinks, а также запросы к RAG прямо из заметок.
+- **MCP-сервер** — доступ к базе знаний из Claude Code как набор инструментов.
 
 ---
 
 ## Архитектура системы
 
 ```
-PDF-файлы
-    │
-    ▼
-[ingest.py] → PyMuPDF → Chunking → multilingual-e5-large → ChromaDB (диск)
-                                                                  │
-[chat_ui.py] ← Gradio UI                                          │
-    │                                                             │
-    ▼                                                             │
-[rag_engine.py] ──── семантический поиск ────────────────────────┘
-    │
-    ▼
-Ollama API (llama3 / mistral) → Ответ + источники
+        Документы (archive/, рекурсивно)
+        PDF · DOCX · DOC · TXT · MD · XLSX · CSV · PPTX · ODT
+                          │
+          ┌───────────────┴────────────────┐
+          ▼                                 ▼
+   [watcher.py]                       (ручной запуск)
+   авто-наблюдатель                          │
+          │                                  │
+          ▼                                  ▼
+   ┌──────────────────────────────────────────────┐
+   │  [ingest.py]  парсинг → chunking →            │
+   │  multilingual-e5-large → ChromaDB (на диске)  │
+   └──────────────────────────────────────────────┘
+          │                                  │
+          │                                  ▼
+          │                        [doc_to_obsidian.py]
+          │                        → заметки в notes/ (Obsidian)
+          ▼
+   ┌──────────────────────────────────────────────┐
+   │  [rag_engine.py]  семантический поиск +       │
+   │  генерация ответа через [llm_provider.py]     │
+   └──────────────────────────────────────────────┘
+       │            │              │
+       ▼            ▼              ▼
+  [chat_ui.py]  [mcp_rag_     [rag_query_from_
+   Gradio UI     server.py]    obsidian.py]
+                 Claude Code   запрос из заметки
 ```
 
-**Компоненты:**
-| Компонент | Назначение |
+### Раскладка каталогов (KMS)
+
+Система рассчитана на структуру `~/KMS` (переопределяется переменной окружения
+`KMS_HOME`):
+
+```
+~/KMS/
+├── archive/      # исходные документы (может быть симлинком на USB-диск)
+├── notes/        # хранилище Obsidian (генерируемые заметки)
+└── rag_system/   # код системы (этот каталог)
+```
+
+> Путь к KMS вычисляется от `$HOME`, а **не** от расположения `rag_system`, —
+> поэтому код можно держать где угодно, не ломая пути к архиву и заметкам
+> (`config.KMS_DIR`, `config.KMS_ARCHIVE_DIR`, `config.KMS_VAULT_DIR`).
+
+---
+
+## Компоненты
+
+| Файл | Назначение |
 |---|---|
-| `config.py` | Единая конфигурация всех параметров |
-| `ingest.py` | Индексация PDF → ChromaDB |
-| `rag_engine.py` | Поиск + генерация ответа |
-| `chat_ui.py` | Веб-интерфейс Gradio |
+| `config.py` | Единая конфигурация: пути, форматы, чанкинг, эмбеддинги, LLM, таксономия, память диалога |
+| `llm_provider.py` | Единый интерфейс к 5 LLM-провайдерам (Ollama + 4 OpenAI-совместимых) |
+| `ingest.py` | Индексация документов всех форматов → ChromaDB |
+| `rag_engine.py` | Семантический поиск + генерация ответа с цитатами |
+| `chat_ui.py` | Веб-интерфейс Gradio (история, память контекста) |
+| `watcher.py` | Наблюдатель за `archive/`: авто-индексация + авто-заметки |
+| `mcp_rag_server.py` | MCP-сервер для Claude Code (4 инструмента) |
+| `doc_to_obsidian.py` | Генерация Obsidian-заметок из документов всех форматов |
+| `pdf_to_obsidian.py` | То же только для PDF (исторический предшественник `doc_to_obsidian.py`) |
+| `rag_query_from_obsidian.py` | RAG-запрос с записью ответа в заметку Obsidian |
+| `rag-watcher.service` | Шаблон systemd-юнита для `watcher.py` |
+| `install_service.sh` | Установка наблюдателя как пользовательского systemd-сервиса |
 
 ---
 
 ## Требования
 
-- **ОС:** Ubuntu 20.04+ (протестировано на 22.04)
-- **Python:** 3.10+
-- **Ollama:** установлен и запущен
+- **ОС:** Linux (протестировано на Ubuntu 22.04)
+- **Python:** 3.10+ (используется 3.12)
 - **RAM:** минимум 8 ГБ (рекомендуется 16 ГБ для больших архивов)
-- **GPU (опционально):** CUDA-совместимая карта ускорит генерацию эмбеддингов
+- **GPU (опционально):** CUDA-карта ускоряет генерацию эмбеддингов при индексации
+- **LLM:** Ollama (по умолчанию) **или** ключ к облачному провайдеру
+- **Системные пакеты** (для парсинга `.doc`):
+  ```bash
+  sudo apt install libreoffice antiword
+  ```
 
 ---
 
 ## Установка
 
-### 1. Установка Ollama
+### 1. Виртуальное окружение и зависимости
 
 ```bash
-# Установка
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Запуск сервера Ollama (в отдельном терминале или как сервис)
-ollama serve
-
-# Загрузка языковой модели (выберите одну)
-ollama pull llama3          # Рекомендуется (4.7 ГБ)
-# ollama pull mistral       # Альтернатива (4.1 ГБ)
-# ollama pull gemma2        # Лёгкая альтернатива
-```
-
-### 2. Клонирование / копирование проекта
-
-```bash
-# Перейдите в директорию проекта
-cd /путь/к/rag_system
-```
-
-### 3. Создание виртуального окружения
-
-```bash
-# Создание окружения
+cd ~/KMS/rag_system
 python3 -m venv .venv
-
-# Активация
 source .venv/bin/activate
-```
-
-### 4. Установка зависимостей
-
-```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **Примечание:** Установка `sentence-transformers` и PyTorch может занять несколько минут.
-> При первом запуске модель `intfloat/multilingual-e5-large` (~1.2 ГБ) будет загружена автоматически с Hugging Face.
+> При первом запуске модель эмбеддингов `intfloat/multilingual-e5-large` (~2.2 ГБ)
+> загрузится автоматически с Hugging Face.
+
+### 2. LLM-провайдер
+
+**Вариант А — локальная Ollama (по умолчанию, без ключей):**
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve                       # в отдельном терминале или как сервис
+ollama pull qwen2.5:7b             # или другая модель из config
+```
+
+**Вариант Б — облачный провайдер** (Groq бесплатен, DeepSeek/OpenRouter дёшевы) —
+см. раздел [«Выбор LLM»](#выбор-llm).
 
 ---
 
 ## Использование
 
-### Шаг 1: Подготовка PDF-документов
+### Шаг 1. Документы
 
-Поместите PDF-файлы в директорию `documents/`:
-
-```bash
-mkdir -p documents
-cp /путь/к/вашим/статьям/*.pdf documents/
-
-# Или создайте символические ссылки на существующую папку
-ln -s /media/data/petroleum_papers documents/papers
-```
-
-Директория `documents/` поддерживает **рекурсивную структуру** — PDF можно организовывать в подпапки:
-```
-documents/
-├── reservoir_engineering/
-│   ├── darcy_flow_2023.pdf
-│   └── skin_factor_analysis.pdf
-├── drilling/
-│   └── wellbore_integrity.pdf
-└── enhanced_recovery/
-    └── eor_methods_review.pdf
-```
-
-### Шаг 2: Индексация документов
+Поместите файлы в `~/KMS/archive/` (поддерживаются подпапки и симлинки):
 
 ```bash
-# Активируйте окружение (если ещё не активировано)
+cp ~/статьи/*.pdf ~/KMS/archive/
+# или весь архив с внешнего диска:
+ln -s /run/media/$USER/MyDisk/library ~/KMS/archive
+```
+
+### Шаг 2. Индексация
+
+```bash
 source .venv/bin/activate
 
-# Базовая индексация
-python ingest.py
-
-# Индексация из другой директории
-python ingest.py --pdf-dir /media/data/papers
-
-# Переиндексация (удаляет существующую базу и создаёт новую)
-python ingest.py --reset
+python ingest.py                       # индексация ~/KMS/archive
+python ingest.py --doc-dir /path/docs  # другой каталог (--pdf-dir — алиас)
+python ingest.py --reset               # полный сброс базы перед индексацией
 ```
 
-**Ожидаемый вывод:**
-```
-2024-01-15 10:23:45 [INFO] ingest: Запуск индексации PDF-архива
-2024-01-15 10:23:45 [INFO] ingest: Директория с PDF: /rag_system/documents
-2024-01-15 10:23:47 [INFO] ingest: Загрузка модели 'intfloat/multilingual-e5-large'...
-2024-01-15 10:24:10 [INFO] ingest: Модель загружена успешно.
-Обработка PDF: 100%|████████████████| 47/47 [05:23<00:00,  6.88с/файл]
-Индексация чанков: 100%|████████████| 8432/8432 [03:11<00:00, 44.1чанк/с]
-2024-01-15 10:32:55 [INFO] ingest: Индексация завершена за 525.3 сек.
-2024-01-15 10:32:55 [INFO] ingest: Обработано чанков: 8432
-```
+Повторный запуск **не переиндексирует всё** — уже обработанные файлы
+пропускаются по хэшу; новые добавляются.
 
-### Шаг 3: Запуск веб-интерфейса
+### Шаг 3. Запросы
+
+**Веб-интерфейс (Gradio):**
 
 ```bash
-# Запуск Gradio UI
-python chat_ui.py
-
-# Откройте в браузере:
-# http://127.0.0.1:7860
+python chat_ui.py                      # http://127.0.0.1:7860
+python chat_ui.py --host 0.0.0.0 --port 7860   # доступ из локальной сети
 ```
 
-> Интерфейс доступен только локально. Для доступа с другого устройства в сети:
-> ```bash
-> python chat_ui.py --host 0.0.0.0 --port 7860
-> ```
+> По умолчанию чат считает эмбеддинг запроса на CPU, оставляя GPU под LLM
+> (важно на картах с 8 ГБ VRAM). Принудительно отдать чату GPU:
+> `CUDA_VISIBLE_DEVICES=0 python chat_ui.py`.
 
-### Консольный режим (без UI)
+**Консоль:**
 
 ```bash
-# Быстрый вопрос из терминала
 python rag_engine.py "Как рассчитывается скин-фактор скважины?"
-
-# С указанием числа источников
 python rag_engine.py "What is Darcy velocity?" --top-k 8
-
-# Статистика базы знаний
-python rag_engine.py --stats
+python rag_engine.py --stats           # статистика коллекции
 ```
+
+---
+
+## Автоматическая индексация (watcher + systemd)
+
+Наблюдатель следит за `~/KMS/archive/` и при появлении/изменении файла запускает
+`ingest.py` и `doc_to_obsidian.py`.
+
+**Разовый запуск:**
+
+```bash
+python watcher.py                      # следит за config.ARCHIVE_DIR
+python watcher.py --watch-dir /path --interval 5
+```
+
+**Установка как systemd-сервис пользователя:**
+
+```bash
+chmod +x install_service.sh
+./install_service.sh
+```
+
+Скрипт подставляет пользователя и пути в `rag-watcher.service`, копирует юнит в
+`~/.config/systemd/user/`, включает и запускает сервис. Управление:
+
+```bash
+journalctl --user -u rag-watcher -f          # логи
+systemctl --user restart rag-watcher
+systemctl --user stop rag-watcher
+```
+
+> Если архив лежит на USB-диске, раскомментируйте `After=...mount` в
+> `rag-watcher.service`, чтобы сервис стартовал после монтирования.
+
+---
+
+## Интеграция с Obsidian
+
+Хранилище Obsidian — `~/KMS/notes/`.
+
+**Генерация заметок из документов** (frontmatter + теги из таксономии + wikilinks):
+
+```bash
+python doc_to_obsidian.py                     # все форматы из archive/
+python doc_to_obsidian.py --force             # перегенерировать существующие
+python doc_to_obsidian.py --dry-run           # без записи файлов
+python doc_to_obsidian.py --force-single PATH # один конкретный файл
+python pdf_to_obsidian.py                     # только PDF (legacy-вариант)
+```
+
+Для каждого документа извлекается текст первых страниц, отправляется в LLM для
+анализа, создаётся `.md` с YAML-frontmatter; вторым проходом строятся wikilinks
+между заметками с ≥ `WIKILINK_MIN_COMMON_TAGS` общими тегами.
+
+**RAG-запрос с записью ответа прямо в заметку:**
+
+```bash
+python rag_query_from_obsidian.py "Какие механизмы ловушки CO2 описаны в Sleipner?"
+python rag_query_from_obsidian.py "Механизмы ловушки CO2" --note "RAG-запрос" --append
+```
+
+---
+
+## MCP-сервер (Claude Code)
+
+`mcp_rag_server.py` предоставляет Claude Code доступ к базе знаний как набор
+инструментов:
+
+| Инструмент | Назначение |
+|---|---|
+| `search_knowledge_base` | Семантический поиск (+ опц. генерация ответа LLM) |
+| `list_documents` | Список проиндексированных документов |
+| `get_document_info` | Информация о конкретном документе |
+| `get_stats` | Статистика базы знаний |
+
+Регистрация в `~/.claude/mcp_servers.json`:
+
+```json
+{
+  "rag_kms": {
+    "command": "python",
+    "args": ["/home/<user>/KMS/rag_system/mcp_rag_server.py"],
+    "cwd": "/home/<user>/KMS/rag_system"
+  }
+}
+```
+
+---
+
+## Выбор LLM
+
+Провайдер и модель задаются в `config.py`:
+
+```python
+LLM_PROVIDER = "ollama"          # ollama | groq | deepseek | openrouter | lmstudio
+LLM_MODEL    = "qwen3.5:latest"  # модель для выбранного провайдера (уже установлена в этой системе)
+LLM_API_KEY  = ""                # ключ для облачных (пусто для локальных)
+```
+
+API-ключ можно не хранить в файле, а задать переменной окружения:
+`RAG_GROQ_API_KEY`, `RAG_DEEPSEEK_API_KEY`, `RAG_OPENROUTER_API_KEY`.
+
+| Провайдер | Ключ | Пример модели | Примечание |
+|---|---|---|---|
+| `ollama` | — | `qwen2.5:7b`, `mistral`, `llama3.2` | Локально, офлайн (по умолчанию) |
+| `lmstudio` | — | `local-model` | Локальный сервер LM Studio (:1234) |
+| `groq` | да | `llama-3.3-70b-versatile` | Бесплатный тариф |
+| `deepseek` | да | `deepseek-chat`, `deepseek-reasoner` | Очень дёшево |
+| `openrouter` | да | `qwen/qwen3-14b:free` | 50+ моделей, есть бесплатные |
+
+> Полностью офлайн-контур обеспечивают только `ollama` и `lmstudio`.
+> Облачные провайдеры отправляют контекст запроса во внешний сервис.
 
 ---
 
 ## Конфигурация
 
-Все параметры настраиваются в файле `config.py`:
+Все параметры — в `config.py`:
 
-| Параметр | Значение по умолчанию | Описание |
+| Параметр | По умолчанию | Описание |
 |---|---|---|
-| `CHUNK_SIZE` | 512 | Размер чанка в символах |
-| `CHUNK_OVERLAP` | 64 | Перекрытие между чанками |
+| `SUPPORTED_EXTENSIONS` | 9 форматов | Какие файлы индексировать |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 512 / 64 | Размер и перекрытие чанков |
 | `EMBEDDING_MODEL` | `intfloat/multilingual-e5-large` | Модель эмбеддингов |
-| `OLLAMA_MODEL` | `llama3` | Основная LLM |
-| `OLLAMA_FALLBACK_MODEL` | `mistral` | Резервная LLM |
-| `DEFAULT_TOP_K` | 5 | Число извлекаемых чанков |
-| `PDF_DIR` | `./documents` | Директория с PDF |
-| `CHROMA_PERSIST_DIR` | `./chroma_db` | Путь к базе ChromaDB |
-| `UI_PORT` | 7860 | Порт веб-интерфейса |
-
-**Пример: смена модели на Mistral**
-
-Откройте `config.py` и измените:
-```python
-OLLAMA_MODEL: str = "mistral"
-```
+| `EMBEDDING_BATCH_SIZE` | 32 | Батч эмбеддингов (уменьшить при нехватке памяти) |
+| `CHROMA_COLLECTION_NAME` | `petroleum_papers` | Имя коллекции ChromaDB |
+| `DEFAULT_TOP_K` / `MAX_CONTEXT_CHUNKS` | 5 / 8 | Извлекаемые / передаваемые в LLM чанки |
+| `LLM_PROVIDER` / `LLM_MODEL` | `ollama` / … | LLM-провайдер и модель |
+| `OLLAMA_OPTIONS` | temp 0.2 … | Параметры генерации |
+| `UI_HOST` / `UI_PORT` | `127.0.0.1` / 7860 | Адрес Gradio UI |
+| `KMS_DIR` | `$HOME/KMS` | Корень KMS (env `KMS_HOME`) |
+| `TAXONOMY` | список тегов | Теги для Obsidian-заметок |
+| `MAX_HISTORY_MESSAGES` | 6 | Глубина памяти диалога |
 
 ---
 
-## Добавление новых документов
+## Структура проекта
 
-При добавлении новых PDF **не нужно переиндексировать всё** — достаточно запустить `ingest.py` снова. Система использует `upsert`, поэтому существующие документы обновятся, а новые добавятся:
-
-```bash
-cp /новые/статьи/*.pdf documents/
-python ingest.py
 ```
-
-Для полной переиндексации (если изменили `CHUNK_SIZE` или модель эмбеддингов):
-```bash
-python ingest.py --reset
+rag_system/
+├── config.py                  # конфигурация
+├── llm_provider.py            # интерфейс к LLM-провайдерам
+├── ingest.py                  # индексация → ChromaDB
+├── rag_engine.py              # поиск + генерация
+├── chat_ui.py                 # Gradio UI
+├── watcher.py                 # авто-наблюдатель
+├── mcp_rag_server.py          # MCP-сервер для Claude Code
+├── doc_to_obsidian.py         # заметки Obsidian (все форматы)
+├── pdf_to_obsidian.py         # заметки Obsidian (только PDF, legacy)
+├── rag_query_from_obsidian.py # RAG-запрос из заметки
+├── obsidian_templates/        # шаблоны заметок Obsidian
+├── rag-watcher.service        # шаблон systemd-юнита
+├── install_service.sh         # установка сервиса
+├── requirements.txt           # зависимости Python
+├── README.md                  # эта документация
+├── documents/                 # локальная папка для документов (опц.)
+├── chroma_db/                 # векторная база ChromaDB (создаётся индексацией)
+└── logs/
+    ├── rag_system.log         # лог системы
+    └── history/               # история диалогов (JSON)
 ```
 
 ---
 
 ## Устранение неполадок
 
-### Ollama недоступна
-
-```
-Ошибка подключения к Ollama. Убедитесь, что сервер запущен.
-```
-**Решение:**
+**Ollama недоступна** (`Ошибка подключения к Ollama`):
 ```bash
-# Проверьте статус
-ollama list
-
-# Запустите сервер
-ollama serve
+ollama list        # проверить статус
+ollama serve       # запустить сервер
 ```
 
-### Модель не найдена
-
-```
-Модель 'llama3' не найдена.
-```
-**Решение:**
+**Модель не найдена:**
 ```bash
-ollama pull llama3
+ollama pull qwen2.5:7b
 ```
 
-### ChromaDB пуста
-
-```
-В базе знаний не найдено релевантных документов.
-```
-**Решение:**
+**База пуста** (`не найдено релевантных документов`):
 ```bash
-# Убедитесь, что PDF-файлы в директории
-ls documents/
-
-# Запустите индексацию
-python ingest.py
+ls ~/KMS/archive/  # проверить наличие файлов
+python ingest.py   # запустить индексацию
 ```
 
-### Ошибка памяти при генерации эмбеддингов
-
-**Решение:** Уменьшите размер батча в `config.py`:
+**Ошибка памяти при индексации** — уменьшите в `config.py`:
 ```python
-EMBEDDING_BATCH_SIZE: int = 8   # Вместо 32
+EMBEDDING_BATCH_SIZE = 8
 ```
 
-### Медленная генерация ответов
+**Облачный провайдер: 401 / 429** — проверьте `LLM_API_KEY` (401) или дождитесь
+сброса лимита / переключитесь на другого провайдера (429).
 
-- Используйте более лёгкую модель: `ollama pull gemma2:2b`
-- Измените в `config.py`: `OLLAMA_MODEL = "gemma2:2b"`
-
----
-
-## Структура файлов проекта
-
-```
-rag_system/
-├── config.py          # Конфигурация
-├── ingest.py          # Индексация PDF
-├── rag_engine.py      # RAG-движок
-├── chat_ui.py         # Gradio интерфейс
-├── requirements.txt   # Зависимости Python
-├── README.md          # Эта документация
-├── documents/         # Папка для PDF-файлов (создаётся автоматически)
-├── chroma_db/         # База данных ChromaDB (создаётся при индексации)
-└── logs/
-    └── rag_system.log # Лог-файл системы
-```
+**Watcher следит не за той папкой** — `ARCHIVE_DIR` должен быть абсолютным;
+проверьте `KMS_HOME`, если архив лежит по нестандартному пути.
 
 ---
 
 ## Лицензия
 
-Проект для внутреннего использования. Зависимости распространяются под своими лицензиями:
-- sentence-transformers: Apache 2.0
-- ChromaDB: Apache 2.0
-- PyMuPDF: AGPL-3.0 (для коммерческого использования требуется коммерческая лицензия)
-- Gradio: Apache 2.0
-- Ollama: MIT
+Проект для внутреннего использования. Зависимости — под своими лицензиями:
+sentence-transformers (Apache 2.0), ChromaDB (Apache 2.0), Gradio (Apache 2.0),
+PyMuPDF (AGPL-3.0 — для коммерческого использования нужна коммерческая лицензия),
+Ollama (MIT).
