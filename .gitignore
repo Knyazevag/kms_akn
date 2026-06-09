@@ -1,0 +1,17 @@
+# Виртуальное окружение Python
+.venv/
+venv/
+
+# Кеш Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Данные пользователя (создаются при работе системы, не публикуются)
+rag_system/chroma_db/
+rag_system/logs/
+rag_system/documents/
+
+# Локальные артефакты
+*.tar.gz
+*.bak

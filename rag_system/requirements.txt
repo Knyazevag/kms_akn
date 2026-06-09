@@ -1,0 +1,52 @@
+# Зависимости для локальной RAG-системы (v4 — мультиформатная)
+# Установка: pip install -r requirements.txt
+#
+# СИСТЕМНЫЕ ПАКЕТЫ (установить отдельно через apt):
+#   sudo apt install libreoffice antiword
+#   libreoffice — конвертация .doc → .txt (основной метод)
+#   antiword    — запасной парсер .doc (если LibreOffice недоступен)
+
+# --- Работа с PDF ---
+PyMuPDF==1.24.5
+
+# --- Работа с DOCX / DOC ---
+python-docx>=1.1.0
+
+# --- Работа с XLSX ---
+openpyxl>=3.1.0
+
+# --- Работа с PPTX ---
+python-pptx>=0.6.23
+
+# --- Работа с ODT ---
+odfpy>=1.4.1
+
+# --- Векторные эмбеддинги ---
+sentence-transformers==3.0.1
+torch>=2.1.0
+transformers>=4.40.0
+
+# --- Векторная база данных ---
+chromadb==0.5.3
+
+# --- Языковая детекция ---
+langdetect==1.0.9
+
+# --- HTTP-запросы к Ollama API ---
+requests==2.32.3
+
+# --- Веб-интерфейс ---
+gradio==4.36.1
+
+# --- Веб-стек закреплён под gradio 4.36.1 ---
+# (без пинов uv/pip ставит несовместимый свежий starlette/fastapi -> UI падает)
+fastapi==0.111.1
+starlette==0.37.2
+pydantic==2.8.2
+
+# --- Прогресс-бар ---
+tqdm==4.66.4
+
+# --- Утилиты ---
+numpy>=1.24.0
+watchdog>=4.0.0

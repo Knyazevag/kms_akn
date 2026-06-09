@@ -1,0 +1,19 @@
+[Unit]
+Description=RAG System PDF Watcher
+After=network.target
+# Запускаться после монтирования USB (если используется).
+# Раскомментируйте строку ниже и подставьте имя вашего диска:
+# After=media-{{USER}}-MyDisk.mount
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{RAG_DIR}}
+ExecStart={{RAG_DIR}}/.venv/bin/python {{RAG_DIR}}/watcher.py
+Restart=on-failure
+RestartSec=10
+# Без буферизации stdout/stderr — логи появляются сразу
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
