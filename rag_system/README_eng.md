@@ -17,6 +17,11 @@ geological CO₂ storage, but the system is not tied to a specific domain.
   (the format list is in `config.SUPPORTED_EXTENSIONS`).
 - **Semantic search** by meaning (rather than word matching) in two languages —
   Russian and English — via the `intfloat/multilingual-e5-large` model.
+- **Cross-language retrieval** — the same question in RU and EN yields a matching
+  set of sources: the `e5` bias toward the query language is compensated by a
+  dual-query (translating the question into the other language) plus result balancing.
+- **Answer language selector** in the chat — 🌐 Auto / 🇷🇺 Russian / 🇬🇧 English
+  (controls the language the answer is written in, independent of the question and sources).
 - **Flexible LLM choice** — the unified `llm_provider.py` interface supports 5
   providers: `ollama`, `groq`, `deepseek`, `openrouter`, `lmstudio`.
   Switching is done through `config.py` without changing code.
@@ -318,7 +323,8 @@ All parameters are in `config.py`:
 | `CHROMA_COLLECTION_NAME` | `petroleum_papers` | ChromaDB collection name |
 | `DEFAULT_TOP_K` / `MAX_CONTEXT_CHUNKS` | 7 / 8 | Retrieved / passed-to-LLM chunks |
 | `CROSS_LANGUAGE_BALANCE` | `True` | Language-balanced retrieval (RU/EN) so a query in one language does not crowd out sources in the other |
-| `RETRIEVAL_FETCH_K` / `MIN_CHUNKS_PER_LANGUAGE` | 40 / 2 | Candidate pool before balancing / guaranteed minimum chunks per language |
+| `CROSS_LANGUAGE_TRANSLATE_QUERY` | `True` | Dual-query: translates the question into the other language (ru↔en) and searches with both, merging the pools — otherwise the `e5` bias leaves the pool single-language and there is nothing to balance |
+| `RETRIEVAL_FETCH_K` / `MIN_CHUNKS_PER_LANGUAGE` | 200 / 2 | Candidate pool before balancing / guaranteed minimum chunks per language |
 | `LLM_PROVIDER` / `LLM_MODEL` | `ollama` / … | LLM provider and model |
 | `OLLAMA_OPTIONS` | temp 0.2 … | Generation parameters |
 | `UI_HOST` / `UI_PORT` | `127.0.0.1` / 7860 | Gradio UI address |

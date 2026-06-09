@@ -88,6 +88,19 @@ def _check_ollama_availability(model: str) -> str:
         return model
 
 
+def _detect_query_language(text: str) -> str:
+    """
+    Грубое определение языка запроса по наличию кириллицы.
+    Для пары ru/en этого достаточно и не требует внешних зависимостей.
+    Возвращает "ru", если доля кириллических букв заметна, иначе "en".
+    """
+    cyrillic = sum(1 for c in text if "а" <= c.lower() <= "я" or c.lower() == "ё")
+    letters = sum(1 for c in text if c.isalpha())
+    if letters == 0:
+        return "en"
+    return "ru" if cyrillic / letters >= 0.3 else "en"
+
+
 def _balance_by_language(
     chunks: list[dict],
     top_k: int,
@@ -391,32 +404,46 @@ class RAGEngine:
     # Поиск релевантных чанков
     # ─────────────────────────────────────────────────────────
 
-    def retrieve(
-        self,
-        question: str,
-        top_k: int = config.DEFAULT_TOP_K,
-    ) -> list[dict]:
+    def _translate_query(self, question: str, target_lang: str) -> Optional[str]:
         """
-        Выполняет семантический поиск по ChromaDB.
-
-        Возвращает список словарей:
-            {"text": str, "metadata": dict, "distance": float}
+        Переводит вопрос на target_lang ("ru" или "en") через LLM-провайдера.
+        Возвращает перевод (без кавычек/пояснений) или None при ошибке.
         """
-        # Добавляем обязательный префикс для multilingual-e5 при запросе
-        query_text = f"query: {question}"
+        lang_name = {"ru": "Russian", "en": "English"}.get(target_lang, target_lang)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"You are a translation engine. Translate the user's text to "
+                    f"{lang_name}. Output ONLY the translation, with no quotes, "
+                    f"notes, or explanations."
+                ),
+            },
+            {"role": "user", "content": question},
+        ]
+        try:
+            translated = self.provider.chat(messages).strip()
+            # На случай, если модель всё же обернула ответ в кавычки
+            translated = translated.strip('"').strip("«»").strip()
+            return translated or None
+        except Exception as e:
+            logger.warning(f"Не удалось перевести запрос для дабл-поиска: {e}")
+            return None
 
+    def _search_one(self, query_text: str, fetch_k: int) -> list[dict]:
+        """
+        Один семантический поиск по ChromaDB для заданной формулировки.
+        Возвращает список чанков с полями {"id", "text", "metadata", "distance"}.
+        """
+        # Обязательный префикс для multilingual-e5 при запросе
         try:
             query_embedding = self.embedding_model.encode(
-                query_text,
+                f"query: {query_text}",
                 normalize_embeddings=config.NORMALIZE_EMBEDDINGS,
             ).tolist()
         except Exception as e:
             logger.error(f"Ошибка генерации эмбеддинга запроса: {e}")
             raise
-
-        # При балансировке достаём широкий пул кандидатов, затем сужаем до top_k
-        balance = config.CROSS_LANGUAGE_BALANCE
-        fetch_k = max(top_k, config.RETRIEVAL_FETCH_K) if balance else top_k
 
         try:
             results = self.collection.query(
@@ -428,20 +455,63 @@ class RAGEngine:
             logger.error(f"Ошибка поиска в ChromaDB: {e}")
             raise
 
-        # Разворачиваем результаты (ChromaDB возвращает вложенные списки,
-        # отсортированные по возрастанию distance — лучшие первыми)
         chunks = []
         if results and results["documents"]:
-            for doc, meta, dist in zip(
+            ids = results.get("ids", [[]])[0]
+            for i, (doc, meta, dist) in enumerate(zip(
                 results["documents"][0],
                 results["metadatas"][0],
                 results["distances"][0],
-            ):
+            )):
                 chunks.append({
+                    "id": ids[i] if i < len(ids) else f"{query_text}:{i}",
                     "text": doc,
                     "metadata": meta,
                     "distance": dist,
                 })
+        return chunks
+
+    def retrieve(
+        self,
+        question: str,
+        top_k: int = config.DEFAULT_TOP_K,
+    ) -> list[dict]:
+        """
+        Выполняет семантический поиск по ChromaDB.
+
+        Возвращает список словарей:
+            {"text": str, "metadata": dict, "distance": float}
+        """
+        # При балансировке достаём широкий пул кандидатов, затем сужаем до top_k
+        balance = config.CROSS_LANGUAGE_BALANCE
+        fetch_k = max(top_k, config.RETRIEVAL_FETCH_K) if balance else top_k
+
+        # Формулировки запроса: оригинал + (опционально) перевод на второй язык.
+        # Дабл-запрос нужен, чтобы в пул попали релевантные источники другого
+        # языка, а не вытеснялись перекосом multilingual-e5 в сторону языка вопроса.
+        query_variants = [question]
+        if balance and config.CROSS_LANGUAGE_TRANSLATE_QUERY:
+            src_lang = _detect_query_language(question)
+            target_lang = "en" if src_lang == "ru" else "ru"
+            translated = self._translate_query(question, target_lang)
+            if translated and translated.strip().lower() != question.strip().lower():
+                query_variants.append(translated)
+                logger.info(
+                    f"Дабл-запрос: '{question[:40]}' [{src_lang}] + "
+                    f"перевод [{target_lang}]: '{translated[:40]}'"
+                )
+
+        # Объединяем пулы кандидатов от всех формулировок, дедуп по id чанка
+        # (при совпадении берём лучший — минимальный — distance)
+        merged: "OrderedDict[str, dict]" = OrderedDict()
+        for variant in query_variants:
+            for ch in self._search_one(variant, fetch_k):
+                cid = ch["id"]
+                if cid not in merged or ch["distance"] < merged[cid]["distance"]:
+                    merged[cid] = ch
+
+        # Сортируем объединённый пул по релевантности (лучшие первыми)
+        chunks = sorted(merged.values(), key=lambda c: c["distance"])
 
         # Кросс-языковая балансировка: гарантируем представление обоих языков
         if balance and len(chunks) > top_k:
@@ -490,6 +560,7 @@ class RAGEngine:
         question: str,
         context: str,
         chat_history: Optional[list[dict]] = None,
+        response_language: str = "auto",
     ) -> str:
         """
         Вызывает Ollama HTTP API для генерации ответа на основе контекста.
@@ -498,9 +569,23 @@ class RAGEngine:
             question: Вопрос пользователя.
             context: Текстовый контекст из релевантных чанков.
             chat_history: Список предыдущих сообщений [{"role": ..., "content": ...}].
+            response_language: Желаемый язык ответа: "ru", "en" или "auto"
+                (по умолчанию — отвечать на языке вопроса).
 
         Возвращает: строку с ответом модели.
         """
+        # Инструкция по языку ответа (форсирует язык независимо от языка вопроса)
+        language_instruction = {
+            "ru": (
+                "\n\nВАЖНО: дай ответ на РУССКОМ языке, независимо от языка вопроса "
+                "и языка источников."
+            ),
+            "en": (
+                "\n\nIMPORTANT: provide your answer in ENGLISH, regardless of the "
+                "language of the question or the sources."
+            ),
+        }.get(response_language, "")
+
         # Формируем пользовательский промпт с контекстом
         user_prompt = (
             f"Фрагменты из научных документов (каждый помечен номером [N]):\n\n{context}\n\n"
@@ -508,6 +593,7 @@ class RAGEngine:
             f"Ответь, используя ТОЛЬКО предоставленный контекст. "
             f"Ссылайся на источники по номеру: [1], [2] и т.д. "
             f"В конце ответа перечисли использованные источники."
+            f"{language_instruction}"
         )
 
         # Собираем историю сообщений
@@ -533,6 +619,7 @@ class RAGEngine:
         top_k: int = config.DEFAULT_TOP_K,
         memory: Optional["ConversationMemory"] = None,
         chat_history: Optional[list[dict]] = None,
+        response_language: str = "auto",
     ) -> dict:
         """
         Выполняет полный цикл RAG: поиск -> генерация -> форматирование.
@@ -542,6 +629,7 @@ class RAGEngine:
             top_k: Количество извлекаемых чанков.
             memory: Объект ConversationMemory (предпочтительно).
             chat_history: Список сообщений [{role, content}] (устаревший параметр, для обратной совместимости).
+            response_language: Желаемый язык ответа: "ru", "en" или "auto".
 
         Возвращает словарь:
             {
@@ -578,7 +666,12 @@ class RAGEngine:
             history_for_llm = chat_history or []
 
         # Шаг 4: Генерация ответа
-        answer = self.generate_answer(question, context, chat_history=history_for_llm)
+        answer = self.generate_answer(
+            question,
+            context,
+            chat_history=history_for_llm,
+            response_language=response_language,
+        )
 
         # Шаг 5: Форматирование источников с snippets
         sources = _format_sources(chunks)

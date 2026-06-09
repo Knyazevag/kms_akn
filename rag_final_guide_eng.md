@@ -961,7 +961,17 @@ Open a browser (Firefox, Chrome — any) and go to the address:
 http://127.0.0.1:7860
 ```
 
-> **[>>] What you'll see in the browser:** A simple chat interface. At the top — a field for entering a question, below — the dialog history. There may also be a `top-k` slider — it controls how many fragments from the knowledge base the system uses for an answer (the more, the fuller the answer, but the slower).
+> **[>>] What you'll see in the browser:** A simple chat interface. At the top — a field for entering a question, below — the dialog history. There is also a `top-k` slider — it controls how many fragments from the knowledge base the system uses for an answer (the more, the fuller the answer, but the slower) — and an **"Answer language"** switch.
+
+> [i] **"Answer language" switch (🌐 Auto / 🇷🇺 Russian / 🇬🇧 English).** Controls the
+> language the LLM **writes the answer** in:
+> - **Auto** (default) — answer in the language of the question;
+> - **Russian / English** — answer forced into the chosen language, even if the
+>   question and the retrieved sources are in another language.
+>
+> This does not affect **source retrieval** — cross-language search is handled by a
+> separate mechanism (dual-query, see 9.6): sources are found in both languages
+> regardless of the chosen answer language.
 
 Try asking your first question! For example:
 
@@ -2834,17 +2844,38 @@ Search without answer generation (only relevant fragments):
 - `top_k=10` — deep analysis, when you need to cover more documents
 - `top_k=15-20` — full coverage of a topic (slower)
 
-> [i] **Cross-language balancing (RU/EN).** The embedding model slightly favours
-> the language of the query, so with a small `top_k` sources in the other language
-> were pushed out of the results (e.g. English papers did not surface for a Russian
-> question). Retrieval therefore runs in two stages: a wide candidate pool is
-> fetched (`RETRIEVAL_FETCH_K = 40`), then the final result is guaranteed to include
-> at least `MIN_CHUNKS_PER_LANGUAGE = 2` chunks for each of the languages in
-> `BALANCED_LANGUAGES = ("ru", "en")`, with the remaining slots filled by best score.
-> The balancing is "soft": if a topic only has documents in one language, the other
-> language is not forced in. Disable it with `CROSS_LANGUAGE_BALANCE = False` in
-> `config.py`. To inspect the language mix of the results:
+> [!] **Problem: the same question in Russian and in English returned different
+> sources.** The `multilingual-e5` embedding model strongly favours the language of
+> the query: for many questions *all* of the nearest neighbours turn out to be in a
+> single language. In practice a Russian question returned only Russian papers
+> (`{ru: 7}`), while the same question in English returned only English ones
+> (`{en: 7}`), and the two source sets did not overlap at all.
+>
+> **The fix works in two layers.**
+>
+> 1. **Language balancing of the results.** Retrieval fetches a wide candidate pool
+>    (`RETRIEVAL_FETCH_K = 200`), then the final result is guaranteed to include at
+>    least `MIN_CHUNKS_PER_LANGUAGE = 2` chunks for each of the languages in
+>    `BALANCED_LANGUAGES = ("ru", "en")`, with the remaining slots filled by best
+>    score. The balancing is "soft": if a topic only has documents in one language,
+>    the other language is not forced in. Disable it with
+>    `CROSS_LANGUAGE_BALANCE = False`.
+>
+> 2. **Dual-query (query translation).** Balancing alone was not enough: if the
+>    candidate pool contains no chunks of the second language at all (which is exactly
+>    what happens under the strong `e5` bias), there is nothing to balance. So the
+>    system translates your question into the other language (ru↔en) with one fast
+>    LLM call and searches with **both** phrasings, merging the pools. This brings in
+>    *relevant* (not "forced") sources in the other language. Result: the same
+>    question in RU and EN yields an almost identical source set (e.g. `{en: 5, ru: 2}`
+>    in both cases). Disable it with `CROSS_LANGUAGE_TRANSLATE_QUERY = False`. The
+>    cost is one extra (fast) LLM call per query.
+>
+> All flags live in `config.py`. To inspect the language mix of the results:
 > `python check_cross_language.py "your question"` (and `--stats` shows the languages in the index).
+>
+> Do not confuse this with the **answer language** (the switch in the chat UI, see
+> 3.5): that controls the language the LLM writes the answer in, not the retrieval.
 
 ---
 

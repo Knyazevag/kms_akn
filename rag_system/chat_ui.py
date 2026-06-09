@@ -114,10 +114,19 @@ def get_stats_text() -> str:
 # Основная функция обработки сообщений
 # ─────────────────────────────────────────────────────────────
 
+# Соответствие подписей переключателя кодам языка для движка
+LANGUAGE_CHOICES = {
+    "🌐 Авто (язык вопроса)": "auto",
+    "🇷🇺 Русский": "ru",
+    "🇬🇧 English": "en",
+}
+
+
 def chat(
     user_message: str,
     history: list[list[Optional[str]]],
     top_k: int,
+    response_language: str,
 ) -> tuple[list[list[Optional[str]]], str, str]:
     """
     Обрабатывает сообщение пользователя и возвращает обновлённые данные UI.
@@ -126,10 +135,12 @@ def chat(
         user_message: Вопрос пользователя.
         history: История чата в формате Gradio [[user_msg, bot_msg], ...].
         top_k: Количество извлекаемых чанков.
+        response_language: Подпись выбранного языка ответа (из LANGUAGE_CHOICES).
 
     Возвращает:
         (обновлённая история, текст источников, пустая строка ввода)
     """
+    lang_code = LANGUAGE_CHOICES.get(response_language, "auto")
     global memory
 
     if engine is None:
@@ -153,6 +164,7 @@ def chat(
             question=user_message,
             top_k=top_k,
             memory=memory,
+            response_language=lang_code,
         )
         answer = result["answer"]
         sources = result["sources"]
@@ -322,6 +334,15 @@ def build_ui() -> gr.Blocks:
                         scale=3,
                     )
 
+                with gr.Row():
+                    language_selector = gr.Radio(
+                        choices=list(LANGUAGE_CHOICES.keys()),
+                        value=list(LANGUAGE_CHOICES.keys())[0],
+                        label="Язык ответа",
+                        info="«Авто» — отвечать на языке вопроса; иначе ответ принудительно на выбранном языке.",
+                        scale=1,
+                    )
+
             # ── Правая колонка: источники и статистика ──────────
             with gr.Column(scale=1):
 
@@ -374,7 +395,7 @@ def build_ui() -> gr.Blocks:
         # Отправка по кнопке
         send_btn.click(
             fn=chat,
-            inputs=[user_input, chatbot, top_k_slider],
+            inputs=[user_input, chatbot, top_k_slider, language_selector],
             outputs=[chatbot, sources_output, user_input],
             queue=True,
         )
@@ -382,7 +403,7 @@ def build_ui() -> gr.Blocks:
         # Отправка по Enter (submit в Textbox)
         user_input.submit(
             fn=chat,
-            inputs=[user_input, chatbot, top_k_slider],
+            inputs=[user_input, chatbot, top_k_slider, language_selector],
             outputs=[chatbot, sources_output, user_input],
             queue=True,
         )

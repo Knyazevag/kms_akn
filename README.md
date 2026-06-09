@@ -8,6 +8,8 @@ large archives of scientific and technical documents. Runs fully offline.
 ## Features
 - Indexing of documents (PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT) into ChromaDB.
 - Answering questions about the archive content with references to sources (RU/EN).
+- Cross-language retrieval: the same question in RU or EN returns a matching set of
+  sources (dual-query translation + result balancing), with a selectable answer language.
 - Automatic creation of structured Obsidian notes with tags and a link graph.
 - Folder watcher: new files are indexed automatically (including on USB/NTFS).
 - Multiple LLM providers: Ollama (local), Groq, DeepSeek, OpenRouter, LM Studio.
@@ -58,6 +60,8 @@ Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. 
 ## Возможности
 - Индексация документов (PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT) в ChromaDB.
 - Ответы на вопросы по содержимому архива со ссылками на источники (RU/EN).
+- Кросс-языковой поиск: один и тот же вопрос на RU или EN возвращает совпадающий
+  набор источников (дабл-запрос с переводом + балансировка), с выбором языка ответа.
 - Автоматическое создание структурированных заметок Obsidian с тегами и графом связей.
 - Наблюдатель за папкой: новые файлы индексируются автоматически (в т.ч. на USB/NTFS).
 - Несколько LLM-провайдеров: Ollama (локально), Groq, DeepSeek, OpenRouter, LM Studio.
