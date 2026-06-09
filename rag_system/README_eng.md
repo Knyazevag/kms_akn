@@ -94,6 +94,7 @@ The system is designed around the `~/KMS` structure (overridable via the
 | `doc_to_obsidian.py` | Generating Obsidian notes from documents of all formats |
 | `pdf_to_obsidian.py` | The same for PDF only (historical predecessor of `doc_to_obsidian.py`) |
 | `rag_query_from_obsidian.py` | RAG query that writes the answer into an Obsidian note |
+| `check_cross_language.py` | Cross-language retrieval diagnostics: languages in the index (`--stats`) and the language of each retrieved chunk |
 | `rag-watcher.service` | systemd unit template for `watcher.py` |
 | `install_service.sh` | Installs the watcher as a user systemd service |
 
@@ -312,9 +313,12 @@ All parameters are in `config.py`:
 | `SUPPORTED_EXTENSIONS` | 9 formats | Which files to index |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | 512 / 64 | Chunk size and overlap |
 | `EMBEDDING_MODEL` | `intfloat/multilingual-e5-large` | Embedding model |
+| `EMBEDDING_DEVICE` | `cpu` | Device for embeddings (`cpu`/`cuda`/`None`); CPU by default to avoid competing with Ollama for the GPU |
 | `EMBEDDING_BATCH_SIZE` | 32 | Embedding batch (reduce if memory is low) |
 | `CHROMA_COLLECTION_NAME` | `petroleum_papers` | ChromaDB collection name |
-| `DEFAULT_TOP_K` / `MAX_CONTEXT_CHUNKS` | 5 / 8 | Retrieved / passed-to-LLM chunks |
+| `DEFAULT_TOP_K` / `MAX_CONTEXT_CHUNKS` | 7 / 8 | Retrieved / passed-to-LLM chunks |
+| `CROSS_LANGUAGE_BALANCE` | `True` | Language-balanced retrieval (RU/EN) so a query in one language does not crowd out sources in the other |
+| `RETRIEVAL_FETCH_K` / `MIN_CHUNKS_PER_LANGUAGE` | 40 / 2 | Candidate pool before balancing / guaranteed minimum chunks per language |
 | `LLM_PROVIDER` / `LLM_MODEL` | `ollama` / … | LLM provider and model |
 | `OLLAMA_OPTIONS` | temp 0.2 … | Generation parameters |
 | `UI_HOST` / `UI_PORT` | `127.0.0.1` / 7860 | Gradio UI address |
@@ -338,6 +342,7 @@ rag_system/
 ├── doc_to_obsidian.py         # Obsidian notes (all formats)
 ├── pdf_to_obsidian.py         # Obsidian notes (PDF only, legacy)
 ├── rag_query_from_obsidian.py # RAG query from a note
+├── check_cross_language.py    # cross-language retrieval diagnostics
 ├── obsidian_templates/        # Obsidian note templates
 ├── rag-watcher.service        # systemd unit template
 ├── install_service.sh         # service installation

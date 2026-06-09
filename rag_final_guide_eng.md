@@ -842,6 +842,8 @@ python ingest.py
 > Downloading: 100%|████████████████| 2.24G/2.24G [18:40<00:00, 2.0MB/s]
 > ```
 > [i] **Tip:** if speed or saving space matters, you can specify a smaller model — `EMBEDDING_MODEL = "intfloat/multilingual-e5-small"` (~470 MB): slightly lower search quality, but noticeably faster. After changing the model, be sure to reindex: `python ingest.py --reset`.
+>
+> [i] **Embedding device.** By default the model runs on CPU (`EMBEDDING_DEVICE = "cpu"` in `config.py`). This is intentional: an 8 GB GPU cannot hold both the local LLM (Ollama, ~6 GB) and the embedding model (~2 GB) at once — indexing crashed with `CUDA out of memory`. On CPU there is no conflict, and embedding a single query still takes a fraction of a second (only bulk indexing is slower). If the GPU is free or has enough memory, set `EMBEDDING_DEVICE = "cuda"` (or `None` for auto-selection) to speed up indexing.
 
 After the model is downloaded, file processing will begin:
 
@@ -2747,8 +2749,8 @@ Documents may contain information on the following topics:
 
 ## Working rules
 1. Answer in the language in which the question is asked (by default — Russian)
-2. When searching the knowledge base, use top_k=5 for ordinary questions,
-   top_k=10 for complex analytical queries
+2. When searching the knowledge base, use top_k=7 for ordinary questions,
+   top_k=10-15 for complex analytical queries
 3. Always indicate the source (file name) when citing
 4. If information is not found in the database — say so directly, do not make things up
 5. To check the system state, use `get_stats`
@@ -2799,7 +2801,7 @@ Sometimes it is convenient to call the tools explicitly, without relying on Clau
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `query` | string | — | Search query (required) |
-| `top_k` | number | 5 | Number of fragments returned |
+| `top_k` | number | 7 | Number of fragments returned |
 | `generate_answer` | bool | True | Generate an answer via LLM |
 | `file_filter` | string | "" | Filter by file name |
 
@@ -2828,9 +2830,21 @@ Search without answer generation (only relevant fragments):
 
 **When to change top_k:**
 - `top_k=3` — fast search, sufficient for simple questions
-- `top_k=5` — standard (default)
+- `top_k=7` — standard (default)
 - `top_k=10` — deep analysis, when you need to cover more documents
 - `top_k=15-20` — full coverage of a topic (slower)
+
+> [i] **Cross-language balancing (RU/EN).** The embedding model slightly favours
+> the language of the query, so with a small `top_k` sources in the other language
+> were pushed out of the results (e.g. English papers did not surface for a Russian
+> question). Retrieval therefore runs in two stages: a wide candidate pool is
+> fetched (`RETRIEVAL_FETCH_K = 40`), then the final result is guaranteed to include
+> at least `MIN_CHUNKS_PER_LANGUAGE = 2` chunks for each of the languages in
+> `BALANCED_LANGUAGES = ("ru", "en")`, with the remaining slots filled by best score.
+> The balancing is "soft": if a topic only has documents in one language, the other
+> language is not forced in. Disable it with `CROSS_LANGUAGE_BALANCE = False` in
+> `config.py`. To inspect the language mix of the results:
+> `python check_cross_language.py "your question"` (and `--stats` shows the languages in the index).
 
 ---
 
