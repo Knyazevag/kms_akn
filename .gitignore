@@ -15,3 +15,16 @@ rag_system/documents/
 # Локальные артефакты
 *.tar.gz
 *.bak
+config.py.fixed
+config.py.patch
+
+# Хранилище Obsidian и архив документов (личные данные, не публикуются)
+/notes/
+/archive
+/archive_local_backup/
+
+# Локальные настройки Claude Code
+/.claude/
+
+# Черновик статьи (отдельный материал, не часть репозитория системы)
+/article_kms.md
