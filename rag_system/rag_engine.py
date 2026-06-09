@@ -14,6 +14,7 @@ import json
 import logging
 import sys
 import uuid
+from collections import OrderedDict
 from typing import Optional
 
 import chromadb
@@ -85,6 +86,64 @@ def _check_ollama_availability(model: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка при проверке Ollama: {e}")
         return model
+
+
+def _balance_by_language(
+    chunks: list[dict],
+    top_k: int,
+    min_per_language: int,
+) -> list[dict]:
+    """
+    Балансирует выдачу по языку, чтобы запрос на одном языке не вытеснял
+    источники на другом.
+
+    Вход: список чанков, ОТСОРТИРОВАННЫЙ по возрастанию distance (лучшие первыми).
+    Логика:
+        1. Гарантируем минимум `min_per_language` лучших чанков каждого
+           присутствующего в пуле языка (round-robin, чтобы соблюсти top_k).
+        2. Оставшиеся места заполняем по глобально лучшему скору.
+    Возвращает не более `top_k` чанков, отсортированных по distance (лучшие первыми).
+
+    Если в пуле один язык — поведение эквивалентно обычному отбору top-k по скору
+    (никакие нерелевантные чанки не навязываются).
+    """
+    if len(chunks) <= top_k:
+        return chunks
+
+    # Группируем по языку с сохранением порядка (чанки уже отсортированы по distance)
+    by_lang: "OrderedDict[str, list[dict]]" = OrderedDict()
+    for ch in chunks:
+        lang = ch["metadata"].get("language", "unknown")
+        by_lang.setdefault(lang, []).append(ch)
+
+    selected: list[dict] = []
+    selected_ids: set[int] = set()
+
+    # Фаза 1: гарантируем минимум на каждый язык (round-robin по языкам)
+    for _ in range(min_per_language):
+        for lst in by_lang.values():
+            for ch in lst:
+                if id(ch) not in selected_ids:
+                    selected.append(ch)
+                    selected_ids.add(id(ch))
+                    break
+            if len(selected) >= top_k:
+                break
+        if len(selected) >= top_k:
+            break
+
+    # Фаза 2: добираем оставшиеся места по лучшему скору (пул уже отсортирован)
+    if len(selected) < top_k:
+        for ch in chunks:
+            if id(ch) not in selected_ids:
+                selected.append(ch)
+                selected_ids.add(id(ch))
+                if len(selected) >= top_k:
+                    break
+
+    # Возвращаем выдачу в порядке релевантности (лучшие первыми)
+    selected.sort(key=lambda c: c["distance"])
+    return selected[:top_k]
 
 
 def _format_sources(chunks: list[dict]) -> list[dict]:
@@ -343,17 +402,22 @@ class RAGEngine:
             logger.error(f"Ошибка генерации эмбеддинга запроса: {e}")
             raise
 
+        # При балансировке достаём широкий пул кандидатов, затем сужаем до top_k
+        balance = config.CROSS_LANGUAGE_BALANCE
+        fetch_k = max(top_k, config.RETRIEVAL_FETCH_K) if balance else top_k
+
         try:
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=min(top_k, self.collection.count()),
+                n_results=min(fetch_k, self.collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as e:
             logger.error(f"Ошибка поиска в ChromaDB: {e}")
             raise
 
-        # Разворачиваем результаты (ChromaDB возвращает вложенные списки)
+        # Разворачиваем результаты (ChromaDB возвращает вложенные списки,
+        # отсортированные по возрастанию distance — лучшие первыми)
         chunks = []
         if results and results["documents"]:
             for doc, meta, dist in zip(
@@ -366,6 +430,21 @@ class RAGEngine:
                     "metadata": meta,
                     "distance": dist,
                 })
+
+        # Кросс-языковая балансировка: гарантируем представление обоих языков
+        if balance and len(chunks) > top_k:
+            before = {
+                lang: sum(1 for c in chunks[:top_k] if c["metadata"].get("language") == lang)
+                for lang in {c["metadata"].get("language") for c in chunks[:top_k]}
+            }
+            chunks = _balance_by_language(chunks, top_k, config.MIN_CHUNKS_PER_LANGUAGE)
+            after = {
+                lang: sum(1 for c in chunks if c["metadata"].get("language") == lang)
+                for lang in {c["metadata"].get("language") for c in chunks}
+            }
+            logger.info(f"Балансировка языков: топ-{top_k} без неё {before} → после {after}")
+        else:
+            chunks = chunks[:top_k]
 
         logger.info(f"Найдено релевантных чанков: {len(chunks)} для вопроса: '{question[:80]}...'")
         return chunks
