@@ -425,8 +425,8 @@ def _normalise_metadata(raw: dict[str, Any], file_name: str) -> dict[str, Any]:
     if not meta.get("title"):
         meta["title"] = Path(file_name).stem
 
-    tax_tags = [normalise_tag(t) for t in (meta.get("tags_from_taxonomy") or [])]
-    auto_tags_raw = meta.get("tags_auto") or []
+    tax_tags = [normalise_tag(t) for t in (meta.get("tags_from_taxonomy") or []) if t]
+    auto_tags_raw = [t for t in (meta.get("tags_auto") or []) if t]
     auto_tags: list[str] = []
     for t in auto_tags_raw:
         t = normalise_tag(t)
@@ -437,9 +437,14 @@ def _normalise_metadata(raw: dict[str, Any], file_name: str) -> dict[str, Any]:
     meta["tags_from_taxonomy"] = tax_tags
     meta["tags_auto"] = auto_tags
 
+    # Списочные поля: модель порой возвращает list с None/пустыми элементами
+    # (["Имя", null]) — это роняло ", ".join(...). Чистим и приводим к строкам.
     for key in ("authors", "keywords", "methods", "software", "key_findings"):
-        if not isinstance(meta.get(key), list):
-            meta[key] = [str(meta[key])] if meta.get(key) else []
+        val = meta.get(key)
+        if isinstance(val, list):
+            meta[key] = [str(x).strip() for x in val if x is not None and str(x).strip()]
+        else:
+            meta[key] = [str(val).strip()] if val else []
 
     return meta
 
