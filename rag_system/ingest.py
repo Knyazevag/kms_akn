@@ -17,6 +17,7 @@ ingest.py — Индексация документов в векторную б
 
 import argparse
 import hashlib
+import json
 import logging
 import re
 import subprocess
@@ -486,49 +487,88 @@ def get_collection(reset: bool = False):
 # Основной генератор чанков
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# Манифест индексации: file-level skip неизменённых файлов
+# ─────────────────────────────────────────────────────────────
+# Хранит {путь_файла: "размер:mtime"} для файлов, чьи чанки уже в базе.
+# Позволяет НЕ парсить (дорогая операция для больших PDF) файлы, которые не
+# менялись с прошлой индексации. Манифест записывается один раз в конце успешного
+# прогона; при сбое он не обновляется → файлы переиндексируются (безопасно).
+MANIFEST_PATH = config.CHROMA_PERSIST_DIR / "ingest_manifest.json"
+
+
+def _file_fingerprint(path: Path) -> str:
+    """Дешёвый отпечаток файла без чтения содержимого: размер + mtime."""
+    st = path.stat()
+    return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def _load_manifest() -> dict:
+    try:
+        return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_manifest(manifest: dict) -> None:
+    try:
+        MANIFEST_PATH.write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as exc:
+        logger.warning(f"Не удалось сохранить манифест индексации: {exc}")
+
+
+def list_supported_files(doc_dir: Path) -> list[Path]:
+    """Все файлы поддерживаемых форматов в директории (рекурсивно, без дублей)."""
+    all_files: list[Path] = []
+    for ext in config.SUPPORTED_EXTENSIONS:
+        all_files.extend(doc_dir.rglob(f"*{ext}"))
+    return sorted(set(all_files))
+
+
+def iter_file_chunks(file_path: Path) -> Generator[dict, None, None]:
+    """Извлекает и нарезает ОДИН файл на чанки с метаданными."""
+    pages = extract_document(file_path)
+    if not pages:
+        logger.warning(f"Текст не извлечён из: {file_path.name}")
+        return
+
+    file_ext = file_path.suffix.lower().lstrip(".")
+    for page in pages:
+        chunks = chunk_text(page["text"])
+        for chunk_idx, chunk_text_val in enumerate(chunks):
+            lang = detect_language(chunk_text_val)
+            # Добавляем префикс для multilingual-e5
+            prefixed = f"passage: {chunk_text_val}"
+            yield {
+                "id": make_doc_id(file_path.name, page["page_num"], chunk_idx),
+                "text": prefixed,
+                "metadata": {
+                    "file_name": file_path.name,
+                    "file_path": str(file_path),
+                    "file_type": file_ext,
+                    "page_num": page["page_num"],
+                    "chunk_idx": chunk_idx,
+                    "language": lang,
+                    "char_count": len(chunk_text_val),
+                },
+            }
+
+
 def iter_doc_chunks(doc_dir: Path) -> Generator[dict, None, None]:
     """
     Рекурсивно обходит директорию, обрабатывает все поддерживаемые форматы.
     Для каждого чанка возвращает словарь с текстом и метаданными.
     """
-    # Собираем все файлы поддерживаемых форматов
-    all_files = []
-    for ext in config.SUPPORTED_EXTENSIONS:
-        all_files.extend(doc_dir.rglob(f"*{ext}"))
-    all_files = sorted(set(all_files))
-
+    all_files = list_supported_files(doc_dir)
     logger.info(f"Найдено файлов для индексации: {len(all_files)}")
     if not all_files:
         logger.warning(f"Файлы не найдены в директории: {doc_dir}")
         return
 
     for file_path in tqdm(all_files, desc="Обработка документов", unit="файл"):
-        pages = extract_document(file_path)
-        if not pages:
-            logger.warning(f"Текст не извлечён из: {file_path.name}")
-            continue
-
-        file_ext = file_path.suffix.lower().lstrip(".")
-
-        for page in pages:
-            chunks = chunk_text(page["text"])
-            for chunk_idx, chunk_text_val in enumerate(chunks):
-                lang = detect_language(chunk_text_val)
-                # Добавляем префикс для multilingual-e5
-                prefixed = f"passage: {chunk_text_val}"
-                yield {
-                    "id": make_doc_id(file_path.name, page["page_num"], chunk_idx),
-                    "text": prefixed,
-                    "metadata": {
-                        "file_name": file_path.name,
-                        "file_path": str(file_path),
-                        "file_type": file_ext,
-                        "page_num": page["page_num"],
-                        "chunk_idx": chunk_idx,
-                        "language": lang,
-                        "char_count": len(chunk_text_val),
-                    },
-                }
+        yield from iter_file_chunks(file_path)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -556,35 +596,70 @@ def run_ingestion(doc_dir: Path, reset: bool = False) -> None:
     existing_ids = set(collection.get(include=[])["ids"])
     logger.info(f"Уже проиндексировано чанков: {len(existing_ids)}")
 
+    # Манифест: пропускаем парсинг неизменённых уже проиндексированных файлов.
+    manifest = {} if reset else _load_manifest()
+    if reset:
+        _save_manifest({})
+
+    all_files = list_supported_files(doc_dir)
+    logger.info(f"Найдено файлов: {len(all_files)}")
+    if not all_files:
+        logger.warning(f"Файлы не найдены в директории: {doc_dir}")
+        return
+
     # Накапливаем батч
     batch_ids, batch_texts, batch_metas = [], [], []
     new_chunks = 0
-    skipped = 0
+    skipped_chunks = 0
+    skipped_files = 0
+    parsed_fps: dict[str, str] = {}   # отпечатки обработанных в этом прогоне файлов
 
-    for chunk in iter_doc_chunks(doc_dir):
-        if chunk["id"] in existing_ids:
-            skipped += 1
+    for file_path in tqdm(all_files, desc="Обработка документов", unit="файл"):
+        key = str(file_path)
+        try:
+            fp = _file_fingerprint(file_path)
+        except OSError:
+            fp = None
+
+        # File-level skip: файл не менялся и уже зафиксирован в манифесте —
+        # не парсим его вовсе (главная экономия времени).
+        if fp is not None and manifest.get(key) == fp:
+            skipped_files += 1
             continue
 
-        batch_ids.append(chunk["id"])
-        batch_texts.append(chunk["text"])
-        batch_metas.append(chunk["metadata"])
+        for chunk in iter_file_chunks(file_path):
+            if chunk["id"] in existing_ids:
+                skipped_chunks += 1
+                continue
 
-        if len(batch_ids) >= config.CHROMA_BATCH_SIZE:
-            _flush_batch(model, collection, batch_ids, batch_texts, batch_metas)
-            new_chunks += len(batch_ids)
-            batch_ids, batch_texts, batch_metas = [], [], []
+            batch_ids.append(chunk["id"])
+            batch_texts.append(chunk["text"])
+            batch_metas.append(chunk["metadata"])
+
+            if len(batch_ids) >= config.CHROMA_BATCH_SIZE:
+                _flush_batch(model, collection, batch_ids, batch_texts, batch_metas)
+                new_chunks += len(batch_ids)
+                batch_ids, batch_texts, batch_metas = [], [], []
+
+        # Файл разобран целиком — запомним отпечаток (чанки в батче/базе).
+        if fp is not None:
+            parsed_fps[key] = fp
 
     # Остаток
     if batch_ids:
         _flush_batch(model, collection, batch_ids, batch_texts, batch_metas)
         new_chunks += len(batch_ids)
 
+    # Сохраняем манифест один раз в конце успешного прогона.
+    manifest.update(parsed_fps)
+    _save_manifest(manifest)
+
     elapsed = time.time() - t0
     logger.info("=" * 60)
     logger.info(f"Индексация завершена за {elapsed:.1f} сек.")
     logger.info(f"Добавлено новых чанков: {new_chunks}")
-    logger.info(f"Пропущено (уже в базе): {skipped}")
+    logger.info(f"Пропущено чанков (уже в базе): {skipped_chunks}")
+    logger.info(f"Пропущено файлов (не менялись): {skipped_files}")
     logger.info(f"Всего в базе: {collection.count()}")
     logger.info("=" * 60)
 
