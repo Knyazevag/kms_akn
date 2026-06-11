@@ -1,13 +1,15 @@
 # RAG KMS: Complete User Guide
 ## Intelligent Document Search System
 
-**Version:** 5.1 (refined based on operational experience)  
+**Version:** 5.2 (refined based on operational experience)  
 **Author:** Alexander Knyazev, Head of the Decarbonization Technologies Department, JSC "SRI SPA "LUCH" — PB  
 **Date:** 2026  
 
 ---
 
 > **What was refined in version 5.1** (based on real installation and operation experience): the Python 3.10–3.12 requirement (ChromaDB does not build on 3.13+); the actual embedding model `multilingual-e5` (by default `e5-large` ~2.2 GB; `e5-small` ~470 MB — for speed); the real template names and note locations; correct flags (`doc_to_obsidian.py --force` instead of non-existent ones); reliable automatic processing on USB/NTFS (polling + catch-up scan on reconnection, repair of a "dirty" NTFS via `ntfsfix`); service autostart without logging in (`linger`); behavior of "reasoning" models (qwen3/deepseek-r1); optional GPU acceleration of indexing via NVIDIA CUDA (Section 6.11), while the chat uses CPU embedding, leaving the video memory for the LLM. The system scripts have been updated accordingly.
+
+> **What's new in version 5.2:** **Index new files** and **Generate notes** buttons right in the web interface with a progress indicator (Section 5.6); **incremental indexing** — unchanged files are not re-parsed (a size+mtime manifest), so a repeat run takes seconds; a **tag cap** per note (15 taxonomy + 5 auto) against "tag bloat"; an **IDF-weighted link graph** (top-15 related notes) instead of a wall of links; **robust generation** of notes — the JSON budget auto-grows and metadata is sanitized.
 
 ---
 
@@ -1200,10 +1202,12 @@ Open Obsidian and find the `Articles` folder in the left panel. Click any note. 
 title: "Enhanced Oil Recovery Using CO2 Injection in Carbonate Reservoirs"
 authors: ["Smith J.", "Brown A."]
 year: 2023
+journal: "Journal of Petroleum Science and Engineering"
 doi: "10.1016/j.petrol.2023.01.001"
-tags: [auto/co2-injection, auto/eor, auto/carbonate-reservoir]
-source: "article_1.pdf"
-file_type: PDF
+tags: ["co2_eor", "carbonate_reservoir", "co2_injection", "auto/miscible_flooding"]
+date_indexed: 2026-06-10
+source_file: "article_1.pdf"
+file_type: "pdf"
 ---
 
 ## Summary
@@ -1362,6 +1366,25 @@ python doc_to_obsidian.py --force
 ```
 
 > [!] **Important:** The `--force` flag recreates all Obsidian notes (without it, a repeat run skips already-processed files — by the `source_file` field, so no duplicates arise). If you manually added anything to the automatic notes, save those edits separately before running with `--force` — it will overwrite the content.
+
+---
+
+### 5.6 Indexing and notes via the web interface
+
+If the watcher is not running (or you added files manually and want to process them now), you can do everything from the web interface — no terminal needed.
+
+Open the chat (`http://127.0.0.1:7860`) and, in the right-hand column, expand the **"🗂️ Knowledge base maintenance"** panel. It has two buttons:
+
+1. **🔄 Index new files** — runs archive indexing. Progress is shown live next to the button: `⏳ Indexing new files: 42%` → on completion `✅ … done (100%)`. Only newly added and modified files are indexed.
+2. **📝 Generate notes** — disabled at first; it becomes available **after** a successful indexing run. It creates Obsidian notes for the new documents (existing ones are skipped) with the same progress indicator.
+
+Typical order: add files to `~/KMS/archive` → click "Index new files" → wait for 100% → click "Generate notes".
+
+> [i] **Fast by default.** Unchanged files are no longer re-parsed — the system remembers their fingerprint (size + modification time) in a manifest. So when there are no new files, indexing finishes in seconds rather than hours; only new and modified documents are parsed.
+
+> [i] **Tip.** Keep the progress tab open until the operation finishes, otherwise the percentage indicator stops streaming (the process itself keeps running in the background). Note generation on CPU takes longer than indexing — that is normal.
+
+> [!] **Important:** Do not trigger indexing via the button while the systemd watcher (`rag-watcher`) is active, so the two processes do not write to the database at once. If the watcher is enabled, the manual button is usually unnecessary — it does everything itself.
 
 ---
 
@@ -3456,6 +3479,6 @@ This table contains all the main commands in one place. We recommend printing it
 
 ---
 
-**Document version:** 5.1 (refined based on operational experience) | **Year:** 2026  
+**Document version:** 5.2 (refined based on operational experience) | **Year:** 2026  
 **Author:** Alexander Knyazev, Head of the Decarbonization Technologies Department, JSC "SRI SPA "LUCH" — PB  
 **Supported document formats:** PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT

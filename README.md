@@ -10,7 +10,15 @@ large archives of scientific and technical documents. Runs fully offline.
 - Answering questions about the archive content with references to sources (RU/EN).
 - Cross-language retrieval: the same question in RU or EN returns a matching set of
   sources (dual-query translation + result balancing), with a selectable answer language.
-- Automatic creation of structured Obsidian notes with tags and a link graph.
+- Automatic creation of structured Obsidian notes from a curated tag taxonomy
+  (capped at 15 taxonomy + 5 auto tags per note) with an IDF-weighted link graph
+  (top-15 related notes — rare shared tags weigh more than ubiquitous ones).
+- Robust note generation: the JSON token budget auto-grows on long answers and
+  metadata is sanitized, so a single document never breaks the whole run.
+- Incremental indexing: unchanged files are skipped without re-parsing (manifest
+  by size + mtime), so re-runs over a large archive take seconds.
+- Web UI maintenance buttons: **Index new files** and **Generate notes** with a
+  live progress %; the notes button activates once indexing finishes.
 - Folder watcher: new files are indexed automatically (including on USB/NTFS).
 - Multiple LLM providers: Ollama (local), Groq, DeepSeek, OpenRouter, LM Studio.
 - Optional GPU acceleration of indexing (NVIDIA CUDA).
@@ -41,7 +49,7 @@ python chat_ui.py         # web interface at http://127.0.0.1:7860
 ```
 
 ---
-Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. Version 5.1.
+Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. Version 5.2.
 
 ## License
 
@@ -62,7 +70,17 @@ Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. 
 - Ответы на вопросы по содержимому архива со ссылками на источники (RU/EN).
 - Кросс-языковой поиск: один и тот же вопрос на RU или EN возвращает совпадающий
   набор источников (дабл-запрос с переводом + балансировка), с выбором языка ответа.
-- Автоматическое создание структурированных заметок Obsidian с тегами и графом связей.
+- Автоматическое создание структурированных заметок Obsidian из контролируемой
+  таксономии тегов (лимит 15 тегов из словаря + 5 авто на заметку) с графом связей
+  по IDF-весу (топ-15 близких заметок — редкие общие теги весомее вездесущих).
+- Устойчивая генерация заметок: бюджет JSON авто-растёт на длинных ответах, а
+  метаданные санируются — один документ не обрывает весь прогон.
+- Инкрементальная индексация: неизменённые файлы пропускаются без повторного
+  парсинга (манифест по размеру + mtime), поэтому повторный прогон по большому
+  архиву занимает секунды.
+- Кнопки обслуживания в веб-интерфейсе: **Индексировать новые файлы** и
+  **Сформировать заметки** с индикатором прогресса (%); кнопка заметок
+  активируется после завершения индексации.
 - Наблюдатель за папкой: новые файлы индексируются автоматически (в т.ч. на USB/NTFS).
 - Несколько LLM-провайдеров: Ollama (локально), Groq, DeepSeek, OpenRouter, LM Studio.
 - Опциональное GPU-ускорение индексации (NVIDIA CUDA).
@@ -93,7 +111,7 @@ python chat_ui.py         # веб-интерфейс на http://127.0.0.1:7860
 ```
 
 ---
-Автор: Александр Князев, начальник отдела технологий декарбонизации. Версия 5.1.
+Автор: Александр Князев, начальник отдела технологий декарбонизации. Версия 5.2.
 
 ## Лицензия
 

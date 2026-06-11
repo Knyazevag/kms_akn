@@ -25,11 +25,19 @@ geological CO₂ storage, but the system is not tied to a specific domain.
 - **Flexible LLM choice** — the unified `llm_provider.py` interface supports 5
   providers: `ollama`, `groq`, `deepseek`, `openrouter`, `lmstudio`.
   Switching is done through `config.py` without changing code.
-- **Web interface** built on Gradio, with dialog history and context memory.
+- **Web interface** built on Gradio, with dialog history and context memory; a
+  "Knowledge base maintenance" panel adds **Index new files** and **Generate
+  notes** buttons with a live progress %; the notes button activates after a
+  successful indexing run.
 - **Automatic indexing** of new files via a watcher on the archive folder
   (`watcher.py`), installable as a systemd service.
+- **Incremental indexing** — unchanged files are skipped without re-parsing
+  (manifest `chroma_db/ingest_manifest.json` keyed by `size:mtime`), so a repeat
+  run over a large archive takes seconds rather than hours.
 - **Obsidian integration** — auto-generation of notes with YAML frontmatter,
-  taxonomy tags, and wikilinks, as well as RAG queries directly from notes.
+  taxonomy tags (capped at 15 taxonomy + 5 auto per note) and an IDF-weighted
+  wikilink graph (top-15 related notes), plus RAG queries directly from notes.
+  Generation is robust: the JSON token budget auto-grows and metadata is sanitized.
 - **MCP server** — access to the knowledge base from Claude Code as a set of tools.
 
 ---
@@ -171,8 +179,11 @@ python ingest.py --doc-dir /path/docs  # another directory (--pdf-dir is an alia
 python ingest.py --reset               # full reset of the database before indexing
 ```
 
-A repeat run **does not reindex everything** — already-processed files are
-skipped by hash; new ones are added.
+A repeat run **does not reindex everything**. Unchanged files are skipped at the
+file level without re-parsing — via the manifest `chroma_db/ingest_manifest.json`
+(a `size:mtime` fingerprint); only new and modified files are parsed. Chunk-level
+deduplication by hash still applies. A no-change run takes seconds; `--reset`
+clears both the database and the manifest.
 
 ### Step 3. Queries
 
@@ -245,8 +256,16 @@ python pdf_to_obsidian.py                     # PDF only (legacy variant)
 ```
 
 For each document, the text of the first pages is extracted, sent to the LLM for
-analysis, and a `.md` file with YAML frontmatter is created; a second pass builds
-wikilinks between notes that have ≥ `WIKILINK_MIN_COMMON_TAGS` tags in common.
+analysis, and a `.md` file with YAML frontmatter is created. Generation is robust:
+the JSON token budget auto-grows on long answers (`done_reason=length` → doubling)
+and metadata is sanitized (dropping `null`/empty), so one document never breaks
+the whole run. Tags are capped (15 taxonomy + 5 auto per note) to stop the model
+from degenerating into long repetitive lists.
+
+A second pass builds wikilinks: for each note it keeps the **top-15** closest —
+shared tags are weighted by **IDF** (`log(N/df)`), so a rare specific tag matters
+more than a ubiquitous one (`co2_storage` appears in hundreds of notes); the
+threshold is ≥ `WIKILINK_MIN_COMMON_TAGS` shared tags.
 
 **RAG query that writes the answer directly into a note:**
 
@@ -329,8 +348,13 @@ All parameters are in `config.py`:
 | `OLLAMA_OPTIONS` | temp 0.2 … | Generation parameters |
 | `UI_HOST` / `UI_PORT` | `127.0.0.1` / 7860 | Gradio UI address |
 | `KMS_DIR` | `$HOME/KMS` | KMS root (env `KMS_HOME`) |
-| `TAXONOMY` | list of tags | Tags for Obsidian notes |
+| `TAXONOMY` | ~140 tags | Controlled tag vocabulary for Obsidian notes (the LLM picks only from it; concepts outside it become `auto/`-prefixed tags) |
+| `WIKILINK_MIN_COMMON_TAGS` | 2 | Minimum shared tags to link two notes |
 | `MAX_HISTORY_MESSAGES` | 6 | Dialog memory depth |
+
+> Tag and link-graph caps live in `doc_to_obsidian.py`: `MAX_TAXONOMY_TAGS=15`,
+> `MAX_AUTO_TAGS=5` (tags per note), `RELATED_TOP_N=15` (links per note). The
+> incremental-indexing manifest is `chroma_db/ingest_manifest.json`.
 
 ---
 
