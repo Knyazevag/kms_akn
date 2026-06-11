@@ -23,7 +23,11 @@ import os
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import logging
+import re
+import subprocess
 import sys
+import threading
+from pathlib import Path
 from typing import Optional
 
 import gradio as gr
@@ -108,6 +112,77 @@ def get_stats_text() -> str:
         )
     except Exception as e:
         return f"Ошибка получения статистики: {e}"
+
+
+# ─────────────────────────────────────────────────────────────
+# Обслуживание базы: индексация новых файлов и формирование заметок
+# ─────────────────────────────────────────────────────────────
+
+RAG_DIR = Path(__file__).resolve().parent
+_PCT_RE = re.compile(r"(\d+)%\|")          # процент из tqdm-вывода скриптов
+_maint_lock = threading.Lock()             # не запускать две операции разом
+
+
+def _stream_script_progress(script_name: str, label: str):
+    """
+    Запускает скрипт обслуживания (ingest.py / doc_to_obsidian.py) как подпроцесс
+    и стримит проценты выполнения, вытаскивая их из tqdm-вывода. Генератор —
+    Gradio обновляет статус-компонент на каждый yield.
+    """
+    if not _maint_lock.acquire(blocking=False):
+        yield "⚠️ Дождитесь окончания текущей операции обслуживания."
+        return
+    try:
+        yield f"⏳ {label}: запуск…"
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(RAG_DIR / script_name)],
+                cwd=str(RAG_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:                       # noqa: BLE001
+            yield f"❌ {label}: не удалось запустить — {exc}"
+            return
+
+        # tqdm обновляет строку через '\r', поэтому читаем посимвольно и режем
+        # по '\r'/'\n', выбирая последний процент.
+        last_pct = -1
+        buf = ""
+        while True:
+            ch = proc.stdout.read(1)
+            if ch == "":
+                break
+            if ch in "\r\n":
+                m = _PCT_RE.search(buf)
+                if m:
+                    pct = int(m.group(1))
+                    if pct != last_pct:
+                        last_pct = pct
+                        yield f"⏳ {label}: **{pct}%**"
+                buf = ""
+            else:
+                buf += ch
+        proc.wait()
+
+        if proc.returncode == 0:
+            yield f"✅ {label}: завершено (100%)."
+        else:
+            yield f"❌ {label}: ошибка (код {proc.returncode}). Подробности в логах."
+    finally:
+        _maint_lock.release()
+
+
+def run_index_ui():
+    """Индексация вновь добавленных файлов архива (ingest.py инкрементален)."""
+    yield from _stream_script_progress("ingest.py", "Индексация новых файлов")
+
+
+def run_notes_ui():
+    """Формирование Obsidian-заметок (doc_to_obsidian.py пропускает готовые)."""
+    yield from _stream_script_progress("doc_to_obsidian.py", "Формирование заметок")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -369,6 +444,32 @@ def build_ui() -> gr.Blocks:
                     size="sm",
                 )
 
+                gr.Markdown("---")
+                with gr.Accordion("🗂️ Обслуживание базы знаний", open=False):
+                    gr.Markdown(
+                        "Проиндексируйте вновь добавленные файлы архива, затем "
+                        "сформируйте по ним заметки Obsidian."
+                    )
+                    index_btn = gr.Button(
+                        "🔄 Индексировать новые файлы",
+                        variant="primary",
+                        size="sm",
+                    )
+                    index_status = gr.Markdown(
+                        "_Готово к индексации._",
+                        elem_id="maint-status",
+                    )
+                    notes_btn = gr.Button(
+                        "📝 Сформировать заметки",
+                        variant="secondary",
+                        size="sm",
+                        interactive=False,
+                    )
+                    notes_status = gr.Markdown(
+                        "_Станет доступно после индексации._",
+                        elem_id="maint-status",
+                    )
+
         # ── Примеры вопросов ────────────────────────────────────
         gr.Markdown("### 💡 Примеры вопросов")
         gr.Examples(
@@ -434,6 +535,34 @@ def build_ui() -> gr.Blocks:
             inputs=[],
             outputs=[stats_display],
             queue=False,
+        )
+
+        # Индексация новых файлов (стрим процентов) → после завершения
+        # активируем кнопку заметок и обновляем статистику базы.
+        index_btn.click(
+            fn=run_index_ui,
+            inputs=[],
+            outputs=[index_status],
+            queue=True,
+        ).then(
+            fn=lambda: (gr.update(interactive=True),
+                        "_Индексация завершена — можно формировать заметки._"),
+            inputs=[],
+            outputs=[notes_btn, notes_status],
+            queue=False,
+        ).then(
+            fn=get_stats_text,
+            inputs=[],
+            outputs=[stats_display],
+            queue=False,
+        )
+
+        # Формирование заметок (стрим процентов)
+        notes_btn.click(
+            fn=run_notes_ui,
+            inputs=[],
+            outputs=[notes_status],
+            queue=True,
         )
 
     return demo
