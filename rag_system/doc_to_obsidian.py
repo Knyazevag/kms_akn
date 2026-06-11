@@ -21,9 +21,11 @@ import argparse
 import copy
 import json
 import logging
+import math
 import re
 import sys
 import unicodedata
+from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -557,21 +559,38 @@ file_type: "{file_type}"
 
 RELATED_SECTION_MARKER = "## Связанные документы"
 RELATED_PLACEHOLDER = "*Будет заполнено автоматически при наличии общих тегов*"
+# Макс. связанных заметок на заметку. Корпус однотемный (CO2/CCS/EOR): теги вроде
+# co2_storage встречаются у 600+ заметок, поэтому простой счёт общих тегов давал
+# «стену» из 700+ ссылок. Взвешиваем общие теги по IDF (редкий тег ценнее) и
+# берём топ-N — граф получается осмысленным и компактным.
+RELATED_TOP_N: int = 15
 
 
 def _find_related(
     note_data: list[dict[str, Any]],
     min_common: int = MIN_COMMON_TAGS,
+    top_n: int = RELATED_TOP_N,
 ) -> dict[str, list[tuple[str, set[str]]]]:
-    relations: dict[str, list[tuple[str, set[str]]]] = {
+    n_total = len(note_data) or 1
+    freq = Counter(t for nd in note_data for t in set(nd["tags"]))
+    weight = {t: math.log(n_total / c) for t, c in freq.items()}
+
+    scored: dict[str, list[tuple[float, str, set[str]]]] = {
         nd["slug"]: [] for nd in note_data
     }
     for i, a in enumerate(note_data):
+        a_tags = set(a["tags"])
         for b in note_data[i + 1:]:
-            common = set(a["tags"]) & set(b["tags"])
+            common = a_tags & set(b["tags"])
             if len(common) >= min_common:
-                relations[a["slug"]].append((b["title"], common))
-                relations[b["slug"]].append((a["title"], common))
+                score = sum(weight[t] for t in common)
+                scored[a["slug"]].append((score, b["title"], common))
+                scored[b["slug"]].append((score, a["title"], common))
+
+    relations: dict[str, list[tuple[str, set[str]]]] = {}
+    for slug, lst in scored.items():
+        lst.sort(key=lambda x: -x[0])
+        relations[slug] = [(title, common) for _, title, common in lst[:top_n]]
     return relations
 
 
