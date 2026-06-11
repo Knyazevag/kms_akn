@@ -1,7 +1,7 @@
 # RAG KMS: Complete User Guide
 ## Intelligent Document Search System
 
-**Version:** 5.2 (refined based on operational experience)  
+**Version:** 5.3 (refined based on operational experience)  
 **Author:** Alexander Knyazev, Head of the Decarbonization Technologies Department, JSC "SRI SPA "LUCH" — PB  
 **Date:** 2026  
 
@@ -10,6 +10,8 @@
 > **What was refined in version 5.1** (based on real installation and operation experience): the Python 3.10–3.12 requirement (ChromaDB does not build on 3.13+); the actual embedding model `multilingual-e5` (by default `e5-large` ~2.2 GB; `e5-small` ~470 MB — for speed); the real template names and note locations; correct flags (`doc_to_obsidian.py --force` instead of non-existent ones); reliable automatic processing on USB/NTFS (polling + catch-up scan on reconnection, repair of a "dirty" NTFS via `ntfsfix`); service autostart without logging in (`linger`); behavior of "reasoning" models (qwen3/deepseek-r1); optional GPU acceleration of indexing via NVIDIA CUDA (Section 6.11), while the chat uses CPU embedding, leaving the video memory for the LLM. The system scripts have been updated accordingly.
 
 > **What's new in version 5.2:** **Index new files** and **Generate notes** buttons right in the web interface with a progress indicator (Section 5.6); **incremental indexing** — unchanged files are not re-parsed (a size+mtime manifest), so a repeat run takes seconds; a **tag cap** per note (15 taxonomy + 5 auto) against "tag bloat"; an **IDF-weighted link graph** (top-15 related notes) instead of a wall of links; **robust generation** of notes — the JSON budget auto-grows and metadata is sanitized.
+
+> **What's new in version 5.3:** **deletion sync** — removing a file from the archive removes its data from the index and its note ("Sync deletions" button in the UI, automatic watcher reaction, a safeguard against wiping the database when the drive is unmounted); a **completion flag** for indexing (`logs/ingest_status.txt`); inter-note links in `[[slug\|Title]]` format that now resolve in the Obsidian graph (previously they hung as gray nodes).
 
 ---
 
@@ -1377,8 +1379,13 @@ Open the chat (`http://127.0.0.1:7860`) and, in the right-hand column, expand th
 
 1. **🔄 Index new files** — runs archive indexing. Progress is shown live next to the button: `⏳ Indexing new files: 42%` → on completion `✅ … done (100%)`. Only newly added and modified files are indexed.
 2. **📝 Generate notes** — disabled at first; it becomes available **after** a successful indexing run. It creates Obsidian notes for the new documents (existing ones are skipped) with the same progress indicator.
+3. **🧹 Sync deletions** — removes from the database and notes the data of files you have **deleted** from the archive (otherwise the system would keep finding and citing "phantom" sources). It reports how many chunks and notes were removed.
 
-Typical order: add files to `~/KMS/archive` → click "Index new files" → wait for 100% → click "Generate notes".
+Typical order: add files to `~/KMS/archive` → click "Index new files" → wait for 100% → click "Generate notes". If you **deleted** anything from the archive, also click "Sync deletions".
+
+> [i] **Completion flag.** When indexing finishes, the system writes `rag_system/logs/ingest_status.txt` with the time and totals. Handy for long runs: even after closing the browser you can later confirm completion with `cat ~/KMS/rag_system/logs/ingest_status.txt`.
+
+> [!] **Safeguard against accidental wipe.** "Sync deletions" compares the database against the current archive. If the archive turns out empty or unavailable (e.g. an **unmounted external drive**), the operation is **aborted** — otherwise an empty file list would delete the whole index. Before a bulk cleanup you can preview what would be removed: `python ingest.py --prune-only --dry-run --prune-notes`.
 
 > [i] **Fast by default.** Unchanged files are no longer re-parsed — the system remembers their fingerprint (size + modification time) in a manifest. So when there are no new files, indexing finishes in seconds rather than hours; only new and modified documents are parsed.
 
@@ -3479,6 +3486,6 @@ This table contains all the main commands in one place. We recommend printing it
 
 ---
 
-**Document version:** 5.2 (refined based on operational experience) | **Year:** 2026  
+**Document version:** 5.3 (refined based on operational experience) | **Year:** 2026  
 **Author:** Alexander Knyazev, Head of the Decarbonization Technologies Department, JSC "SRI SPA "LUCH" — PB  
 **Supported document formats:** PDF, DOCX, DOC, TXT, MD, XLSX, CSV, PPTX, ODT

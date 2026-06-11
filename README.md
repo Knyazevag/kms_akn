@@ -17,8 +17,12 @@ large archives of scientific and technical documents. Runs fully offline.
   metadata is sanitized, so a single document never breaks the whole run.
 - Incremental indexing: unchanged files are skipped without re-parsing (manifest
   by size + mtime), so re-runs over a large archive take seconds.
-- Web UI maintenance buttons: **Index new files** and **Generate notes** with a
-  live progress %; the notes button activates once indexing finishes.
+- Web UI maintenance buttons: **Index new files**, **Generate notes** and **Sync
+  deletions** with a live progress %; the notes button activates once indexing
+  finishes. Indexing writes a completion flag (`logs/ingest_status.txt`).
+- Deletion sync: removing a file from the archive removes its chunks from the
+  index and its note (UI button, CLI `--prune`, and an automatic watcher reaction).
+  Guarded against wiping the whole index if the drive is unmounted.
 - Folder watcher: new files are indexed automatically (including on USB/NTFS).
 - Multiple LLM providers: Ollama (local), Groq, DeepSeek, OpenRouter, LM Studio.
 - Optional GPU acceleration of indexing (NVIDIA CUDA).
@@ -49,7 +53,7 @@ python chat_ui.py         # web interface at http://127.0.0.1:7860
 ```
 
 ---
-Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. Version 5.2.
+Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. Version 5.3.
 
 ## License
 
@@ -78,9 +82,13 @@ Author: Alexander Knyazev, Head of the Decarbonization Technologies Department. 
 - Инкрементальная индексация: неизменённые файлы пропускаются без повторного
   парсинга (манифест по размеру + mtime), поэтому повторный прогон по большому
   архиву занимает секунды.
-- Кнопки обслуживания в веб-интерфейсе: **Индексировать новые файлы** и
-  **Сформировать заметки** с индикатором прогресса (%); кнопка заметок
-  активируется после завершения индексации.
+- Кнопки обслуживания в веб-интерфейсе: **Индексировать новые файлы**,
+  **Сформировать заметки** и **Синхронизировать удаления** с индикатором
+  прогресса (%); кнопка заметок активируется после завершения индексации.
+  Индексация пишет файл-флаг завершения (`logs/ingest_status.txt`).
+- Синхронизация удалений: удаление файла из архива убирает его чанки из индекса
+  и заметку (кнопка в UI, CLI `--prune`, авто-реакция наблюдателя). Есть защита
+  от сноса всего индекса при отмонтированном диске.
 - Наблюдатель за папкой: новые файлы индексируются автоматически (в т.ч. на USB/NTFS).
 - Несколько LLM-провайдеров: Ollama (локально), Groq, DeepSeek, OpenRouter, LM Studio.
 - Опциональное GPU-ускорение индексации (NVIDIA CUDA).
@@ -111,7 +119,7 @@ python chat_ui.py         # веб-интерфейс на http://127.0.0.1:7860
 ```
 
 ---
-Автор: Александр Князев, начальник отдела технологий декарбонизации. Версия 5.2.
+Автор: Александр Князев, начальник отдела технологий декарбонизации. Версия 5.3.
 
 ## Лицензия
 

@@ -26,14 +26,19 @@ geological CO₂ storage, but the system is not tied to a specific domain.
   providers: `ollama`, `groq`, `deepseek`, `openrouter`, `lmstudio`.
   Switching is done through `config.py` without changing code.
 - **Web interface** built on Gradio, with dialog history and context memory; a
-  "Knowledge base maintenance" panel adds **Index new files** and **Generate
-  notes** buttons with a live progress %; the notes button activates after a
-  successful indexing run.
+  "Knowledge base maintenance" panel adds **Index new files**, **Generate notes**
+  and **Sync deletions** buttons with a live progress %; the notes button
+  activates after a successful indexing run.
 - **Automatic indexing** of new files via a watcher on the archive folder
   (`watcher.py`), installable as a systemd service.
 - **Incremental indexing** — unchanged files are skipped without re-parsing
   (manifest `chroma_db/ingest_manifest.json` keyed by `size:mtime`), so a repeat
-  run over a large archive takes seconds rather than hours.
+  run over a large archive takes seconds rather than hours. On completion a flag
+  file `logs/ingest_status.txt` is written.
+- **Deletion sync** — removing a file from the archive removes its chunks from the
+  index and its Obsidian note (`ingest.py --prune` / UI button; the watcher reacts
+  to deletions automatically). Safeguard: if the archive is empty/unavailable (an
+  unmounted drive), prune is aborted so the whole index is not wiped.
 - **Obsidian integration** — auto-generation of notes with YAML frontmatter,
   taxonomy tags (capped at 15 taxonomy + 5 auto per note) and an IDF-weighted
   wikilink graph (top-15 related notes), plus RAG queries directly from notes.
@@ -177,6 +182,8 @@ source .venv/bin/activate
 python ingest.py                       # index ~/KMS/archive
 python ingest.py --doc-dir /path/docs  # another directory (--pdf-dir is an alias)
 python ingest.py --reset               # full reset of the database before indexing
+python ingest.py --prune --prune-notes # index + remove data of files deleted from the archive
+python ingest.py --prune-only --dry-run --prune-notes  # preview what would be removed (no deletion)
 ```
 
 A repeat run **does not reindex everything**. Unchanged files are skipped at the
