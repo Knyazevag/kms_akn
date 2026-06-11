@@ -519,6 +519,18 @@ def _save_manifest(manifest: dict) -> None:
         logger.warning(f"Не удалось сохранить манифест индексации: {exc}")
 
 
+# Файл-флаг статуса индексации: пишется в конце каждого прогона, чтобы факт
+# завершения можно было увидеть без терминала и без активной сессии.
+STATUS_PATH = config.LOG_DIR / "ingest_status.txt"
+
+
+def _write_status(text: str) -> None:
+    try:
+        STATUS_PATH.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        logger.warning(f"Не удалось записать статус-файл индексации: {exc}")
+
+
 def list_supported_files(doc_dir: Path) -> list[Path]:
     """Все файлы поддерживаемых форматов в директории (рекурсивно, без дублей)."""
     all_files: list[Path] = []
@@ -655,13 +667,25 @@ def run_ingestion(doc_dir: Path, reset: bool = False) -> None:
     _save_manifest(manifest)
 
     elapsed = time.time() - t0
+    total = collection.count()
     logger.info("=" * 60)
     logger.info(f"Индексация завершена за {elapsed:.1f} сек.")
     logger.info(f"Добавлено новых чанков: {new_chunks}")
     logger.info(f"Пропущено чанков (уже в базе): {skipped_chunks}")
     logger.info(f"Пропущено файлов (не менялись): {skipped_files}")
-    logger.info(f"Всего в базе: {collection.count()}")
+    logger.info(f"Всего в базе: {total}")
     logger.info("=" * 60)
+
+    _write_status(
+        "✅ ИНДЕКСАЦИЯ ЗАВЕРШЕНА: {ts}\n"
+        "Длительность: {dur:.0f} сек\n"
+        "Добавлено новых чанков: {new}\n"
+        "Пропущено файлов (не менялись): {skf}\n"
+        "Всего чанков в базе: {tot}\n".format(
+            ts=time.strftime("%Y-%m-%d %H:%M:%S"),
+            dur=elapsed, new=new_chunks, skf=skipped_files, tot=total,
+        )
+    )
 
 
 def _flush_batch(model, collection, ids, texts, metas):
