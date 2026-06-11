@@ -575,7 +575,7 @@ def _find_related(
     freq = Counter(t for nd in note_data for t in set(nd["tags"]))
     weight = {t: math.log(n_total / c) for t, c in freq.items()}
 
-    scored: dict[str, list[tuple[float, str, set[str]]]] = {
+    scored: dict[str, list[tuple[float, str, str, set[str]]]] = {
         nd["slug"]: [] for nd in note_data
     }
     for i, a in enumerate(note_data):
@@ -584,19 +584,21 @@ def _find_related(
             common = a_tags & set(b["tags"])
             if len(common) >= min_common:
                 score = sum(weight[t] for t in common)
-                scored[a["slug"]].append((score, b["title"], common))
-                scored[b["slug"]].append((score, a["title"], common))
+                scored[a["slug"]].append((score, b["slug"], b["title"], common))
+                scored[b["slug"]].append((score, a["slug"], a["title"], common))
 
-    relations: dict[str, list[tuple[str, set[str]]]] = {}
+    # Каждая связь — (слаг_цели, заголовок_цели, общие_теги). Слаг нужен, чтобы
+    # ссылка вида [[слаг|Заголовок]] резолвилась в файл (имена файлов — слаги).
+    relations: dict[str, list[tuple[str, str, set[str]]]] = {}
     for slug, lst in scored.items():
         lst.sort(key=lambda x: -x[0])
-        relations[slug] = [(title, common) for _, title, common in lst[:top_n]]
+        relations[slug] = [(tslug, title, common) for _, tslug, title, common in lst[:top_n]]
     return relations
 
 
 def _update_related_section(
     md_path: Path,
-    related: list[tuple[str, set[str]]],
+    related: list[tuple[str, str, set[str]]],
     dry_run: bool = False,
 ) -> None:
     if not related:
@@ -604,9 +606,12 @@ def _update_related_section(
 
     content = md_path.read_text(encoding="utf-8")
     lines = []
-    for title, common_tags in sorted(related, key=lambda x: -len(x[1])):
+    for tslug, title, common_tags in sorted(related, key=lambda x: -len(x[2])):
         tags_str = " ".join(f"#{t}" for t in sorted(common_tags))
-        lines.append(f"- [[{title}]] ({len(common_tags)} общих тег(а): {tags_str})")
+        # [[слаг|Заголовок]] — резолвится в файл-слаг, отображается заголовок
+        lines.append(
+            f"- [[{tslug}|{title}]] ({len(common_tags)} общих тег(а): {tags_str})"
+        )
     links_block = "\n".join(lines)
 
     new_section = (
