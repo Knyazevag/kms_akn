@@ -174,12 +174,39 @@ class DocumentEventHandler(FileSystemEventHandler):
             label="obsidian",
         )
 
+    def _handle_delete(self, path_str: str) -> None:
+        """Файл удалён из архива → убираем его чанки из базы и заметку."""
+        path = Path(path_str)
+        if path.suffix.lower() not in config.SUPPORTED_EXTENSIONS:
+            return
+        logger.info(
+            "Файл удалён [%s]: %s — убираю из индекса и заметок.",
+            path.suffix.upper().lstrip("."), path.name,
+        )
+        self._processed.discard(path_str)
+        run_subprocess(
+            [
+                self._python,
+                str(RAG_DIR / "ingest.py"),
+                "--remove-file", path_str,
+                "--prune-notes",
+            ],
+            label="remove",
+        )
+
     def on_created(self, event: FileSystemEvent) -> None:  # type: ignore[override]
         if not event.is_directory:
             self._handle_file(event.src_path)
 
+    def on_deleted(self, event: FileSystemEvent) -> None:  # type: ignore[override]
+        if not event.is_directory:
+            self._handle_delete(event.src_path)
+
     def on_moved(self, event: FileSystemEvent) -> None:  # type: ignore[override]
         if not event.is_directory:
+            # Переименование/перемещение: старый путь больше не существует —
+            # убираем его данные, затем индексируем файл по новому пути.
+            self._handle_delete(event.src_path)
             self._handle_file(event.dest_path)
 
 

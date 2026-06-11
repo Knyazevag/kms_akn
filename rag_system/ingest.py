@@ -684,6 +684,137 @@ def _flush_batch(model, collection, ids, texts, metas):
 # CLI
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# Синхронизация удалений: убрать из базы то, чего больше нет в архиве
+# ─────────────────────────────────────────────────────────────
+
+def remove_file(file_path, prune_notes: bool = False, dry_run: bool = False) -> dict:
+    """
+    Точечно удаляет данные ОДНОГО файла: чанки из ChromaDB (по `file_path`),
+    запись из манифеста и, опционально, его заметку Obsidian (по `source_file`).
+    Используется наблюдателем при событии удаления файла.
+    """
+    fp = str(file_path)
+    collection = get_collection(reset=False)
+    n_before = collection.count()
+    if not dry_run:
+        collection.delete(where={"file_path": fp})
+    n_deleted = n_before - collection.count() if not dry_run else 0
+
+    if not dry_run:
+        manifest = _load_manifest()
+        if fp in manifest:
+            del manifest[fp]
+            _save_manifest(manifest)
+
+    removed_note = False
+    if prune_notes:
+        name = Path(file_path).name
+        vault = Path(config.KMS_VAULT_DIR)
+        if vault.exists():
+            for md in vault.glob("*.md"):
+                head = md.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'^source_file:\s*"?(.+?)"?\s*$', head, re.MULTILINE)
+                if m and m.group(1).strip() == name:
+                    if not dry_run:
+                        md.unlink()
+                    removed_note = True
+                    break
+
+    logger.info(
+        "Удаление '%s': чанков убрано %d, заметка %s%s",
+        name if prune_notes else Path(fp).name, n_deleted,
+        "удалена" if removed_note else "не трогалась",
+        " [DRY-RUN]" if dry_run else "",
+    )
+    return {"chunks": n_deleted, "note_removed": removed_note}
+
+
+def prune_deleted(doc_dir: Path, prune_notes: bool = False, dry_run: bool = False) -> dict:
+    """
+    Полная сверка с архивом: убирает из индекса (и опц. из заметок) данные файлов,
+    которых больше нет на диске. Чанки — по метаданным `file_path`, записи
+    манифеста — по ключу, заметки — по `source_file` во фронтматтере.
+
+    ЗАЩИТА: если архив не существует или пуст (например, отмонтирован внешний
+    диск), prune ОТМЕНЯЕТСЯ — иначе пустой список «текущих файлов» снёс бы весь
+    индекс.
+    """
+    t0 = time.time()
+    logger.info("=" * 60)
+    logger.info("Синхронизация удалений (prune)%s", " [DRY-RUN]" if dry_run else "")
+    logger.info(f"Директория: {doc_dir}")
+
+    current_files = list_supported_files(doc_dir)
+    current_paths = {str(p) for p in current_files}
+    current_names = {p.name for p in current_files}
+
+    if not Path(doc_dir).exists() or not current_paths:
+        logger.error(
+            "Архив пуст или недоступен (%s). Prune ОТМЕНЁН, чтобы не удалить весь "
+            "индекс. Проверьте, примонтирован ли диск.", doc_dir,
+        )
+        return {"aborted": True, "orphan_chunks": 0, "orphan_files": 0, "removed_notes": 0}
+
+    collection = get_collection(reset=False)
+    data = collection.get(include=["metadatas"])
+    ids = data["ids"]
+    metas = data["metadatas"] or []
+
+    orphan_ids, orphan_paths = [], set()
+    for cid, meta in zip(ids, metas):
+        fp = (meta or {}).get("file_path")
+        if fp not in current_paths:
+            orphan_ids.append(cid)
+            orphan_paths.add(fp)
+
+    logger.info(
+        "Чанков всего: %d | осиротевших файлов: %d | осиротевших чанков: %d",
+        len(ids), len(orphan_paths), len(orphan_ids),
+    )
+
+    if not dry_run and orphan_ids:
+        for i in range(0, len(orphan_ids), 500):
+            collection.delete(ids=orphan_ids[i:i + 500])
+
+    removed_manifest = 0
+    if not dry_run:
+        manifest = _load_manifest()
+        kept = {k: v for k, v in manifest.items() if k in current_paths}
+        removed_manifest = len(manifest) - len(kept)
+        _save_manifest(kept)
+
+    removed_notes = 0
+    if prune_notes:
+        vault = Path(config.KMS_VAULT_DIR)
+        if vault.exists():
+            for md in vault.glob("*.md"):
+                head = md.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'^source_file:\s*"?(.+?)"?\s*$', head, re.MULTILINE)
+                if m and m.group(1).strip() not in current_names:
+                    if not dry_run:
+                        md.unlink()
+                    removed_notes += 1
+        logger.info("Осиротевших заметок: %d", removed_notes)
+
+    elapsed = time.time() - t0
+    logger.info(
+        "Prune завершён за %.1f сек%s. Чанков: %d, файлов: %d, заметок: %d, "
+        "записей манифеста: %d.",
+        elapsed, " [DRY-RUN]" if dry_run else "",
+        0 if dry_run else len(orphan_ids), len(orphan_paths),
+        0 if dry_run else removed_notes, removed_manifest,
+    )
+    logger.info("=" * 60)
+    return {
+        "aborted": False,
+        "orphan_chunks": len(orphan_ids),
+        "orphan_files": len(orphan_paths),
+        "removed_notes": removed_notes,
+        "dry_run": dry_run,
+    }
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Индексация документов (PDF, DOCX, TXT и др.) в ChromaDB"
@@ -699,5 +830,39 @@ if __name__ == "__main__":
         action="store_true",
         help="Полностью сбросить базу ChromaDB перед индексацией",
     )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="После индексации убрать из базы данные файлов, удалённых из архива",
+    )
+    parser.add_argument(
+        "--prune-only",
+        action="store_true",
+        help="Только синхронизация удалений (без индексации)",
+    )
+    parser.add_argument(
+        "--prune-notes",
+        action="store_true",
+        help="При prune также удалять осиротевшие заметки Obsidian",
+    )
+    parser.add_argument(
+        "--remove-file",
+        type=Path,
+        default=None,
+        help="Точечно удалить данные одного файла (путь); используется наблюдателем",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Только показать, что будет удалено при prune/remove-file, ничего не удаляя",
+    )
     args = parser.parse_args()
-    run_ingestion(doc_dir=args.doc_dir, reset=args.reset)
+
+    if args.remove_file is not None:
+        remove_file(args.remove_file, prune_notes=args.prune_notes, dry_run=args.dry_run)
+    elif args.prune_only:
+        prune_deleted(doc_dir=args.doc_dir, prune_notes=args.prune_notes, dry_run=args.dry_run)
+    else:
+        run_ingestion(doc_dir=args.doc_dir, reset=args.reset)
+        if args.prune:
+            prune_deleted(doc_dir=args.doc_dir, prune_notes=args.prune_notes, dry_run=args.dry_run)

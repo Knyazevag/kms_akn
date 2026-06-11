@@ -185,6 +185,48 @@ def run_notes_ui():
     yield from _stream_script_progress("doc_to_obsidian.py", "Формирование заметок")
 
 
+def run_prune_ui():
+    """
+    Синхронизация удалений: убирает из базы и заметок данные файлов, удалённых из
+    архива (`ingest.py --prune-only --prune-notes`). Операция быстрая и без tqdm,
+    поэтому читаем вывод целиком и показываем итоговые счётчики.
+    """
+    if not _maint_lock.acquire(blocking=False):
+        yield "⚠️ Дождитесь окончания текущей операции обслуживания."
+        return
+    try:
+        yield "⏳ Синхронизация удалений: выполняется…"
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(RAG_DIR / "ingest.py"),
+                 "--prune-only", "--prune-notes"],
+                cwd=str(RAG_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except Exception as exc:                       # noqa: BLE001
+            yield f"❌ Синхронизация удалений: не удалось запустить — {exc}"
+            return
+        out = proc.stdout.read()
+        proc.wait()
+
+        if "Prune ОТМЕНЁН" in out:
+            yield ("⚠️ Синхронизация отменена: архив пуст или недоступен — "
+                   "проверьте, примонтирован ли диск (индекс не тронут).")
+        elif proc.returncode != 0:
+            yield f"❌ Синхронизация удалений: ошибка (код {proc.returncode}). См. логи."
+        else:
+            m = re.search(r"Чанков: (\d+), файлов: (\d+), заметок: (\d+)", out)
+            if m:
+                yield (f"✅ Синхронизация удалений: убрано чанков {m.group(1)} "
+                       f"(файлов {m.group(2)}), заметок {m.group(3)}.")
+            else:
+                yield "✅ Синхронизация удалений завершена."
+    finally:
+        _maint_lock.release()
+
+
 # ─────────────────────────────────────────────────────────────
 # Основная функция обработки сообщений
 # ─────────────────────────────────────────────────────────────
@@ -469,6 +511,15 @@ def build_ui() -> gr.Blocks:
                         "_Станет доступно после индексации._",
                         elem_id="maint-status",
                     )
+                    prune_btn = gr.Button(
+                        "🧹 Синхронизировать удаления",
+                        variant="secondary",
+                        size="sm",
+                    )
+                    prune_status = gr.Markdown(
+                        "_Убирает из базы и заметок файлы, удалённые из архива._",
+                        elem_id="maint-status",
+                    )
 
         # ── Примеры вопросов ────────────────────────────────────
         gr.Markdown("### 💡 Примеры вопросов")
@@ -563,6 +614,19 @@ def build_ui() -> gr.Blocks:
             inputs=[],
             outputs=[notes_status],
             queue=True,
+        )
+
+        # Синхронизация удалений → обновляем статистику базы
+        prune_btn.click(
+            fn=run_prune_ui,
+            inputs=[],
+            outputs=[prune_status],
+            queue=True,
+        ).then(
+            fn=get_stats_text,
+            inputs=[],
+            outputs=[stats_display],
+            queue=False,
         )
 
     return demo
