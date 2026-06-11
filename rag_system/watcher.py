@@ -266,7 +266,9 @@ class DocumentWatcher:
             vault = Path(config.KMS_VAULT_DIR)
             noted: set[str] = set()
             for md in vault.glob("*.md"):
-                head = md.read_text(encoding="utf-8", errors="ignore")[:2000]
+                # фронтматтер целиком: source_file может быть за первыми 2000
+                # символами при раздутых списках тегов (иначе — ложные дубли)
+                head = md.read_text(encoding="utf-8", errors="ignore")
                 m = re.search(r'^source_file:\s*"?(.+?)"?\s*$', head, re.MULTILINE)
                 if m:
                     noted.add(m.group(1).strip())

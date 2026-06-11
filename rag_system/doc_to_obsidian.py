@@ -48,6 +48,11 @@ TEXT_LIMIT: int = 6000        # лимит символов текста, пер
 # 1024 токенов → JSON обрывается без закрывающей "}" → «не найден JSON-объект».
 JSON_NUM_PREDICT: int = 2048
 JSON_NUM_PREDICT_MAX: int = 8192  # потолок при удвоении бюджета на ретраях
+# Кап тегов на заметку: qwen3.5 игнорирует «keep auto tags minimal» и
+# вырождается в повторяющиеся списки (до 200+ тегов), что раздувает
+# frontmatter за пределы окна чтения skip-логики и засоряет граф wikilinks.
+MAX_TAXONOMY_TAGS: int = 15
+MAX_AUTO_TAGS: int = 5
 
 # ─── Логирование ──────────────────────────────────────────────────────────
 
@@ -296,6 +301,16 @@ def _all_tags(meta: dict[str, Any]) -> list[str]:
     return list(meta["tags_from_taxonomy"]) + list(meta["tags_auto"])
 
 
+def _dedup_keep_order(seq: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in seq:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 def _yaml_list(items: list[str]) -> str:
     escaped = [f'"{i}"' for i in items]
     return "[" + ", ".join(escaped) + "]"
@@ -434,8 +449,13 @@ def _normalise_metadata(raw: dict[str, Any], file_name: str) -> dict[str, Any]:
             t = "auto/" + t
         auto_tags.append(t)
 
-    meta["tags_from_taxonomy"] = tax_tags
-    meta["tags_auto"] = auto_tags
+    # Дедуп с сохранением порядка + кап (см. MAX_*_TAGS): не даём runaway-спискам
+    # auto-тегов раздувать frontmatter и засорять граф связей.
+    meta["tags_from_taxonomy"] = _dedup_keep_order(tax_tags)[:MAX_TAXONOMY_TAGS]
+    _tax_set = set(meta["tags_from_taxonomy"])
+    meta["tags_auto"] = [
+        t for t in _dedup_keep_order(auto_tags) if t not in _tax_set
+    ][:MAX_AUTO_TAGS]
 
     # Списочные поля: модель порой возвращает list с None/пустыми элементами
     # (["Имя", null]) — это роняло ", ".join(...). Чистим и приводим к строкам.
@@ -645,7 +665,9 @@ def process_archive(
     existing_sources: set[str] = set()
     if not force:
         for _md in vault_dir.glob("*.md"):
-            _head = _md.read_text(encoding="utf-8", errors="ignore")[:2000]
+            # читаем фронтматтер целиком: source_file может оказаться за пределами
+            # первых 2000 символов, если frontmatter раздут (длинные списки тегов)
+            _head = _md.read_text(encoding="utf-8", errors="ignore")
             _m = re.search(r'^source_file:\s*"?(.+?)"?\s*$', _head, re.MULTILINE)
             if _m:
                 existing_sources.add(_m.group(1).strip())
